@@ -18,7 +18,8 @@ const BRAND = process.env.BRAND_NAME || 'Forries';
 exports.api = onRequest({ memory: '512MiB', timeoutSeconds: 60 }, app);
 
 // Birthday rewards + notifications, every morning (rewards also appear lazily when a card is opened).
-exports.birthdays = onSchedule({ schedule: 'every day 08:00', timeZone: 'Africa/Johannesburg' }, async () => {
+// Cloud Scheduler isn't offered in africa-south1, so this one job runs from Belgium.
+exports.birthdays = onSchedule({ schedule: 'every day 08:00', timeZone: 'Africa/Johannesburg', region: process.env.SCHEDULER_REGION || 'europe-west1' }, async () => {
   await L.runBirthdays(process.env.PUBLIC_URL || '');
 });
 
