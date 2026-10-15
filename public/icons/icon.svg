@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1f4d3a"/>
+  <circle cx="256" cy="256" r="178" fill="none" stroke="#c8a24a" stroke-width="14" stroke-dasharray="34 22"/>
+  <text x="256" y="300" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="150" fill="#fff">F</text>
+  <path d="M256 352 l14 28 31 4 -22 22 5 31 -28 -15 -28 15 5 -31 -22 -22 31 -4z" fill="#c8a24a" transform="translate(0,-8) scale(1)"/>
+</svg>
