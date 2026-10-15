@@ -50,6 +50,16 @@ jobs:
           # Which service account / project the key belongs to (not secret), to help diagnose permission errors.
           echo "::notice title=Deploying as::$(jq -r '"\(.client_email) (project \(.project_id))"' "$RUNNER_TEMP/sa.json")"
 
+      # The birthday job first went out in africa-south1, which has no Cloud Scheduler, so Firebase
+      # can't delete it itself. Remove that leftover directly (no-op once it's gone).
+      - name: Remove leftover africa-south1 birthday function
+        if: steps.check.outputs.enabled == 'true'
+        run: |
+          gcloud auth activate-service-account --key-file="$RUNNER_TEMP/sa.json" --quiet
+          if gcloud functions describe birthdays --region=africa-south1 --project=forries-2815d >/dev/null 2>&1; then
+            gcloud functions delete birthdays --region=africa-south1 --project=forries-2815d --quiet
+          fi
+
       - name: Deploy
         if: steps.check.outputs.enabled == 'true'
         env:
