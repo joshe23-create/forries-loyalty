@@ -59,6 +59,13 @@ jobs:
           if gcloud functions describe birthdays --region=africa-south1 --project=forries-2815d >/dev/null 2>&1; then
             gcloud functions delete birthdays --region=africa-south1 --project=forries-2815d --quiet
           fi
+          # sendCampaign was first created while the database was in nam5; its trigger region can't be
+          # changed in place, so delete it if it still points elsewhere and let the deploy recreate it.
+          region=$(gcloud functions describe sendCampaign --region=africa-south1 --project=forries-2815d --format='value(eventTrigger.triggerRegion)' 2>/dev/null || true)
+          if [ -n "$region" ] && [ "$region" != "africa-south1" ]; then
+            echo "sendCampaign trigger is in $region; deleting so it is recreated in africa-south1"
+            gcloud functions delete sendCampaign --region=africa-south1 --project=forries-2815d --quiet
+          fi
 
       - name: Deploy
         if: steps.check.outputs.enabled == 'true'
