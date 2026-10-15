@@ -47,6 +47,8 @@ jobs:
         run: |
           printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
           printf '%s\n' "$FN_ENV" > functions/.env
+          # Which service account / project the key belongs to (not secret), to help diagnose permission errors.
+          echo "::notice title=Deploying as::$(jq -r '"\(.client_email) (project \(.project_id))"' "$RUNNER_TEMP/sa.json")"
 
       - name: Deploy
         if: steps.check.outputs.enabled == 'true'
