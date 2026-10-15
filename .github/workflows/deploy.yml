@@ -52,4 +52,18 @@ jobs:
         if: steps.check.outputs.enabled == 'true'
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
-        run: npx --yes firebase-tools@15.34.0 deploy --project forries-2815d --non-interactive --force
+        run: |
+          set -o pipefail
+          npx --yes firebase-tools@15.34.0 deploy --project forries-2815d --non-interactive --force 2>&1 | tee deploy.log
+
+      # Surface the reason as an annotation, so it shows on the run's summary page.
+      - name: Report deploy error
+        if: failure() && steps.check.outputs.enabled == 'true'
+        run: |
+          {
+            grep -iE "error|denied|permission|failed|not enabled|has not been used" deploy.log || true
+            echo '--- firebase-debug.log (tail) ---'
+            tail -n 40 firebase-debug.log 2>/dev/null || true
+          } | tail -n 70 > report.txt
+          msg=$(sed 's/%/%25/g; s/\r//g' report.txt | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Firebase deploy failed::$msg"
