@@ -32,7 +32,8 @@ function toast(msg, isError) {
   toast.t = setTimeout(() => t.classList.add('hidden'), isError ? 5000 : 2500);
 }
 
-const parseUtc = (s) => new Date(s.replace(' ', 'T') + 'Z');
+// Dates from the API are ISO timestamps; plain YYYY-MM-DD values are calendar days.
+const parseUtc = (s) => new Date(s);
 const fmtDate = (s) => (s.length === 10 ? new Date(s + 'T12:00:00') : parseUtc(s)).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
 const fmtTime = (s) => parseUtc(s).toLocaleString('en-ZA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const phoneFmt = (p) => (p ? '+' + p : '');
@@ -306,7 +307,7 @@ function renderMember() {
     } else if (d.stamp) {
       b.disabled = true;
       try {
-        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: Number(d.stamp), qty: qty[d.stamp] } });
+        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: d.stamp, qty: qty[d.stamp] } });
         current = r.view;
         qty[d.stamp] = 1;
         renderMember();
@@ -316,7 +317,7 @@ function renderMember() {
         b.disabled = false;
       }
     } else if (d.redeem) {
-      const vch = v.vouchers.find((x) => x.id === Number(d.redeem));
+      const vch = v.vouchers.find((x) => x.id === d.redeem);
       if (!confirm(`Redeem "${vch.title}" for ${m.name}?`)) return;
       try {
         const r = await api(`/api/s/members/${m.code}/redeem`, { body: { voucher_id: vch.id } });
@@ -496,7 +497,7 @@ async function renderPrograms() {
   $('#main').querySelectorAll('[data-edit]').forEach(
     (b) =>
       (b.onclick = () => {
-        const p = list.find((x) => x.id === Number(b.dataset.edit));
+        const p = list.find((x) => x.id === b.dataset.edit);
         dialog('Edit stamp card', form(p), async (fd, f) => (await api('/api/s/programs/' + p.id, { method: 'PATCH', body: read(fd, f) }), renderPrograms()));
       })
   );
@@ -532,7 +533,7 @@ async function renderSpecials() {
   $('#main').onclick = async (e) => {
     const b = e.target.closest('button');
     if (b?.dataset.edit) {
-      const s = list.find((x) => x.id === Number(b.dataset.edit));
+      const s = list.find((x) => x.id === b.dataset.edit);
       dialog('Edit post', form(s), async (fd, f) => (await api('/api/s/specials/' + s.id, { method: 'PUT', body: read(fd, f) }), renderSpecials()));
     } else if (b?.dataset.del && confirm('Delete this post?')) {
       await api('/api/s/specials/' + b.dataset.del, { method: 'DELETE' });

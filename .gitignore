@@ -1,3 +1,9 @@
 node_modules/
-data/
 .env
+functions/.env
+functions/.env.*
+!functions/.env.example
+.firebase/
+*-debug.log
+firebase-debug.log
+firestore-debug.log

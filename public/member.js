@@ -29,7 +29,7 @@ function toast(msg, isError) {
   toast.t = setTimeout(() => t.classList.add('hidden'), isError ? 5000 : 2500);
 }
 
-const fmtDate = (iso) => new Date(iso.length === 10 ? iso + 'T12:00:00' : iso.replace(' ', 'T') + 'Z').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDate = (iso) => new Date(iso.length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
 const firstName = (n) => String(n || '').split(' ')[0];
 const wordmark = (cls = '') => `<h1 class="wordmark ${cls}">${esc(brand.name)}<small>Rewards</small></h1>`;
 

@@ -1,0 +1,55 @@
+name: Deploy to Firebase
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check deploy secrets are set
+        id: check
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FN_ENV: ${{ secrets.FUNCTIONS_ENV }}
+        run: |
+          if [ -z "$SA" ] || [ -z "$FN_ENV" ]; then
+            echo "::notice::Skipping deploy: add FIREBASE_SERVICE_ACCOUNT and FUNCTIONS_ENV repository secrets to enable it (see README)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.enabled == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.enabled == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install function dependencies
+        if: steps.check.outputs.enabled == 'true'
+        run: npm ci
+        working-directory: functions
+
+      - name: Write credentials and function config
+        if: steps.check.outputs.enabled == 'true'
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FN_ENV: ${{ secrets.FUNCTIONS_ENV }}
+        run: |
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          printf '%s\n' "$FN_ENV" > functions/.env
+
+      - name: Deploy
+        if: steps.check.outputs.enabled == 'true'
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: npx --yes firebase-tools@15.34.0 deploy --project forries-2815d --non-interactive --force
