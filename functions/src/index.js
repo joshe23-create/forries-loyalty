@@ -14,8 +14,42 @@ const notify = require('./notify');
 
 const BRAND = process.env.BRAND_NAME || 'Forries';
 
-// All of /api/**, /unsubscribe and /manifest.webmanifest (see firebase.json rewrites).
+// The API, in Johannesburg next to the database.
 exports.api = onRequest({ memory: '512MiB', timeoutSeconds: 60 }, app);
+
+// Firebase Hosting can't rewrite to functions in africa-south1, so Hosting sends /api/**, /unsubscribe and
+// /manifest.webmanifest here (europe-west1) and this forwards each request, in one hop, to `api` above.
+// That's one extra round trip per request instead of moving `api` away from the database.
+const API_URL = process.env.API_UPSTREAM || `https://africa-south1-${process.env.GCLOUD_PROJECT}.cloudfunctions.net/api`;
+const PASS_REQUEST = ['cookie', 'content-type', 'accept', 'user-agent', 'accept-language'];
+const PASS_RESPONSE = ['content-type', 'cache-control', 'content-disposition', 'location'];
+
+exports.web = onRequest({ region: 'europe-west1', memory: '256MiB', timeoutSeconds: 60 }, async (req, res) => {
+  const headers = {};
+  for (const h of PASS_REQUEST) if (req.headers[h]) headers[h] = req.headers[h];
+  headers['x-forwarded-host'] = req.headers['x-forwarded-host'] || req.headers.host;
+  headers['x-forwarded-proto'] = 'https';
+  headers['x-forwarded-for'] = req.headers['x-forwarded-for'] || req.ip;
+  try {
+    const upstream = await fetch(API_URL + req.originalUrl, {
+      method: req.method,
+      headers,
+      body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.rawBody,
+      redirect: 'manual',
+    });
+    res.status(upstream.status);
+    for (const h of PASS_RESPONSE) {
+      const v = upstream.headers.get(h);
+      if (v) res.set(h, v);
+    }
+    const cookies = upstream.headers.getSetCookie();
+    if (cookies.length) res.set('set-cookie', cookies);
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (e) {
+    console.error('[web] upstream error', e);
+    res.status(502).json({ error: 'Something went wrong — please try again' });
+  }
+});
 
 // Birthday rewards + notifications, every morning (rewards also appear lazily when a card is opened).
 // Cloud Scheduler isn't offered in africa-south1, so this one job runs from Belgium.

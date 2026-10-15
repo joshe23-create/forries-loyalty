@@ -124,10 +124,11 @@ Meta charges per marketing or authentication message.
 ## Layout
 
 ```
-firebase.json            hosting rewrites (/api/**, /unsubscribe, /manifest.webmanifest → api function)
+firebase.json            hosting rewrites (/api/**, /unsubscribe, /manifest.webmanifest → web relay → api)
 firestore.rules          deny all direct client access
 firestore.indexes.json   composite index for member activity
-functions/src/index.js   Cloud Functions: api (HTTP), birthdays (daily 08:00 SAST), sendCampaign (Firestore trigger)
+functions/src/index.js   Cloud Functions: api (HTTP, africa-south1), web (relay for Hosting, europe-west1),
+                         birthdays (daily 08:00 SAST, europe-west1), sendCampaign (Firestore trigger)
 functions/src/app.js     the Express API
 functions/src/loyalty.js stamping, rewards, undo, birthdays (Firestore transactions)
 functions/src/auth.js    member sessions + login codes, staff accounts

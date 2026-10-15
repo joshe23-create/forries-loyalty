@@ -10,22 +10,22 @@
       {
         "source": "/api/**",
         "function": {
-          "functionId": "api",
-          "region": "africa-south1"
+          "functionId": "web",
+          "region": "europe-west1"
         }
       },
       {
         "source": "/unsubscribe",
         "function": {
-          "functionId": "api",
-          "region": "africa-south1"
+          "functionId": "web",
+          "region": "europe-west1"
         }
       },
       {
         "source": "/manifest.webmanifest",
         "function": {
-          "functionId": "api",
-          "region": "africa-south1"
+          "functionId": "web",
+          "region": "europe-west1"
         }
       }
     ],
