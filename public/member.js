@@ -31,7 +31,7 @@ function toast(msg, isError) {
 
 const fmtDate = (iso) => new Date(iso.length === 10 ? iso + 'T12:00:00' : iso).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
 const firstName = (n) => String(n || '').split(' ')[0];
-const wordmark = (cls = '') => `<h1 class="wordmark ${cls}">${esc(brand.name)}<small>Rewards</small></h1>`;
+const wordmark = (cls = '') => `<h1 class="wordmark ${cls}"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /><small>Rewards</small></h1>`;
 
 function birthdayFields() {
   return `<div class="row">
@@ -184,7 +184,7 @@ async function loadMe(first) {
 function renderApp() {
   if (!$('#app-main')) {
     root.innerHTML = `
-      <header class="topbar"><div class="wordmark">${esc(brand.name)}</div><div class="hi" id="hi"></div></header>
+      <header class="topbar"><div class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /></div><div class="hi" id="hi"></div></header>
       <main class="view" id="app-main"></main>
       <nav class="tabbar"><div class="inner">
         <button data-tab="card"><span class="i">🎟️</span>Card</button>

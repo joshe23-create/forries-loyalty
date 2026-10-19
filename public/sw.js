@@ -1,6 +1,6 @@
 // App-shell cache so the card opens instantly (and offline shows the last-loaded shell).
-const CACHE = 'rewards-v1';
-const SHELL = ['/', '/styles.css', '/member.js', '/manifest.webmanifest', '/icons/icon.svg'];
+const CACHE = 'rewards-v2';
+const SHELL = ['/', '/styles.css', '/member.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/logo-white.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

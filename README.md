@@ -18,6 +18,9 @@ It runs entirely on **Firebase**:
 - Scan with the phone or tablet camera, or type the card code, phone number or email.
 - Stamp any card (1 to 10 at a time) and redeem rewards. Mistakes can be undone within 15 minutes.
 - Every action is logged with the staff member's name.
+- **Bill verification:** staff must enter the till slip number to stamp. Each bill can be used for one member, once per card.
+- **One stamp per card per visit:** after a stamp, that card is locked for a set time (default 3 hours). Staff can add 1 stamp per scan, and there's a daily limit per card. Managers can override all of these.
+- Staff can't stamp their own card.
 
 **For managers (also `/staff`)**
 - **Dashboard:** members, new and active members, stamps, rewards redeemed and unclaimed rewards, a daily chart, top regulars, and CSV export.
@@ -26,6 +29,13 @@ It runs entirely on **Firebase**:
 - **Messages:** send email campaigns, or WhatsApp campaigns using approved templates, to opted-in members only. You can target everyone, recent visitors, lapsed regulars or this month's birthdays.
 - **Birthday reward:** issued automatically for the member's whole birthday month.
 - **Team:** staff and manager accounts, plus a printable A4 sign-up poster with a QR code.
+- **Integrity:**
+  - **Weekly spot checks:** 5 random bills to look up on the till, marked ✓ or ✗.
+  - **Staff scorecards:** stamps, new regulars, checks passed or failed, undos, after-hours stamps.
+  - **Warning signs:** after-hours stamps, high undo rates, stamps concentrated on a few members, failed checks.
+  - **Bills export:** CSV of every stamped bill.
+- **Staff bonus:** a staff member is marked bonus-eligible each month when they meet your spot-check and new-regular targets with no failed checks. A "new regular" is a customer they gave a first stamp to who came back on another day.
+- **Stamp rules:** set the bill requirement, visit hours, limits, trading hours and bonus targets in Team & settings.
 
 ## One-time Firebase setup (in the console)
 

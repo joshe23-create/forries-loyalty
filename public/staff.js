@@ -8,6 +8,7 @@ let me = null;
 let brand = { name: 'Rewards' };
 let tab = 'scan';
 let current = null; // member view currently open
+let billNo = ''; // bill / slip number typed for the member currently open
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -60,7 +61,7 @@ function dialog(title, html, onSubmit, submitLabel = 'Save') {
 async function showLogin(setup) {
   stopCamera();
   root.innerHTML = `
-    <div class="hero" style="padding:32px 24px"><h1 class="wordmark">${esc(brand.name)}<small>Staff</small></h1></div>
+    <div class="hero" style="padding:32px 24px"><h1 class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /><small>Staff</small></h1></div>
     <form class="pad" id="lf" style="max-width:420px;margin:0 auto">
       <h2>${setup ? 'Create the manager account' : 'Staff sign in'}</h2>
       ${setup ? '<label>Your name<input name="name" required autocomplete="name" /></label>' : ''}
@@ -86,6 +87,7 @@ const TABS = [
   ['scan', 'Scan', false],
   ['members', 'Members', false],
   ['dashboard', 'Dashboard', true],
+  ['integrity', 'Integrity', true],
   ['programs', 'Stamp cards', true],
   ['specials', "What's on", true],
   ['messages', 'Messages', true],
@@ -95,7 +97,7 @@ const TABS = [
 function renderShell() {
   root.innerHTML = `
     <header class="s-top">
-      <div class="bar"><div class="wordmark">${esc(brand.name)} <span style="font-family:system-ui;font-size:13px;color:var(--accent);letter-spacing:.15em">STAFF</span></div>
+      <div class="bar"><div class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /> <span style="font-family:system-ui;font-size:13px;color:var(--accent);letter-spacing:.15em">STAFF</span></div>
         <div class="who">${esc(me.name)} · <button class="link" id="out">Sign out</button></div></div>
       <nav class="s-tabs" id="tabs">${TABS.filter(([, , adm]) => !adm || me.role === 'admin')
         .map(([k, l]) => `<button data-tab="${k}">${l}</button>`)
@@ -117,7 +119,7 @@ function go(t) {
   stopCamera();
   $('#main').onclick = null;
   document.querySelectorAll('#tabs [data-tab]').forEach((b) => b.classList.toggle('active', b.dataset.tab === t));
-  ({ scan: renderScan, members: renderMembers, dashboard: renderDashboard, programs: renderPrograms, specials: renderSpecials, messages: renderMessages, settings: renderSettings })[t]();
+  ({ scan: renderScan, members: renderMembers, dashboard: renderDashboard, integrity: renderIntegrity, programs: renderPrograms, specials: renderSpecials, messages: renderMessages, settings: renderSettings })[t]();
 }
 
 // ------------------------------------------------------------------ scanning
@@ -133,6 +135,7 @@ function stopCamera() {
 
 function renderScan() {
   current = null;
+  billNo = '';
   $('#main').innerHTML = `
     <div class="card stack">
       <div class="scanner" id="scanner"><video id="video" playsinline muted></video><div class="frame"></div><div class="msg" id="scanMsg">Starting camera…</div></div>
@@ -239,6 +242,7 @@ async function openMember(code, quiet) {
     if (tab === 'scan') renderScan();
     return;
   }
+  if (current?.member.code !== view.member.code) billNo = '';
   current = view;
   renderMember();
 }
@@ -246,6 +250,7 @@ async function openMember(code, quiet) {
 const qty = {};
 function renderMember() {
   const v = current;
+  const rules = me.rules || { require_bill: false, max_per_scan: 10, max_per_card_per_day: 10, visit_hours: 0 };
   const m = v.member;
   const admin = me.role === 'admin';
   const bday = m.birthday ? new Date(2000, Number(m.birthday.slice(0, 2)) - 1, Number(m.birthday.slice(3))).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' }) : null;
@@ -269,24 +274,29 @@ function renderMember() {
         : '<div class="card muted">No rewards to claim.</div>'
     }</div>
     <div class="section-title">Add stamps</div>
-    <div class="card">${v.cards
+    <div class="card">
+      ${rules.require_bill || v.cards.length ? `<label style="margin-top:0">Bill / slip number${rules.require_bill ? '' : ' <span class="muted" style="font-weight:400">(optional)</span>'}
+        <input id="bill" value="${esc(billNo)}" inputmode="text" autocomplete="off" autocapitalize="characters" placeholder="As printed on the till slip" /></label>` : ''}
+      ${v.cards
       .map((c) => {
-        qty[c.program_id] ??= 1;
+        qty[c.program_id] = Math.min(qty[c.program_id] ?? 1, rules.max_per_scan);
         return `<div class="prog">
           <div class="nm"><strong>${esc(c.emoji)} ${esc(c.name)}</strong> <span class="muted small">${c.stamps}/${c.stamps_required}</span>
             <div class="bar"><i style="width:${(c.stamps / c.stamps_required) * 100}%"></i></div></div>
-          <div class="stepper"><button data-dec="${c.program_id}" aria-label="Fewer">−</button><span id="q${c.program_id}">${qty[c.program_id]}</span><button data-inc="${c.program_id}" aria-label="More">+</button></div>
-          <button class="btn primary" data-stamp="${c.program_id}">Stamp</button>
+          ${rules.max_per_scan > 1 ? `<div class="stepper"><button data-dec="${c.program_id}" aria-label="Fewer">−</button><span id="q${c.program_id}">${qty[c.program_id]}</span><button data-inc="${c.program_id}" aria-label="More">+</button></div>` : ''}
+          <button class="btn primary" data-stamp="${c.program_id}">Stamp${rules.max_per_scan > 1 ? '' : ' +1'}</button>
         </div>`;
       })
-      .join('') || '<p class="muted">No active stamp cards.</p>'}</div>
+      .join('') || '<p class="muted">No active stamp cards.</p>'}
+      <p class="small muted" style="margin-bottom:0">One stamp per card per visit${rules.visit_hours ? ` (${rules.visit_hours}h)` : ''} · max ${rules.max_per_card_per_day} per card per day${admin ? ' · managers can override' : ''}.</p>
+    </div>
     <div class="section-title">Recent activity</div>
     <div class="card"><ul class="act">${
       v.recent.length
         ? v.recent
             .map((t) => {
               const label =
-                t.type === 'stamp' ? `${esc(t.emoji || '')} +${t.qty} ${esc(t.program || '')}` : t.type === 'redeem' ? `🎁 Redeemed: ${esc(t.voucher || '')}` : `🎉 Gift: ${esc(t.voucher || '')}`;
+                t.type === 'stamp' ? `${esc(t.emoji || '')} +${t.qty} ${esc(t.program || '')}${t.bill_ref ? ` <span class="muted small">bill ${esc(t.bill_ref)}</span>` : ''}${t.outside_hours ? ' <span class="pill off" title="Outside trading hours">after hours</span>' : ''}` : t.type === 'redeem' ? `🎁 Redeemed: ${esc(t.voucher || '')}` : `🎉 Gift: ${esc(t.voucher || '')}`;
               return `<li><span class="${t.undone ? 'undone' : ''}">${label}<span class="muted small"> · ${fmtTime(t.created_at)}${t.staff ? ' · ' + esc(t.staff) : ''}</span></span>
                 ${t.can_undo ? `<button class="btn sm" data-undo="${t.id}">Undo</button>` : ''}</li>`;
             })
@@ -295,6 +305,7 @@ function renderMember() {
     }</ul></div>`;
 
   const main = $('#main');
+  $('#bill')?.addEventListener('input', (e) => (billNo = e.target.value));
   $('#next').onclick = () => (tab === 'scan' ? renderScan() : go(tab));
   main.onclick = async (e) => {
     const b = e.target.closest('button');
@@ -302,16 +313,20 @@ function renderMember() {
     const d = b.dataset;
     if (d.inc || d.dec) {
       const id = d.inc || d.dec;
-      qty[id] = Math.max(1, Math.min(10, qty[id] + (d.inc ? 1 : -1)));
+      qty[id] = Math.max(1, Math.min(rules.max_per_scan, qty[id] + (d.inc ? 1 : -1)));
       $('#q' + id).textContent = qty[id];
     } else if (d.stamp) {
+      if (rules.require_bill && !billNo.trim()) {
+        toast('Enter the bill / slip number first', true);
+        return $('#bill')?.focus();
+      }
       b.disabled = true;
       try {
-        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: d.stamp, qty: qty[d.stamp] } });
+        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: d.stamp, qty: qty[d.stamp], bill_ref: billNo } });
         current = r.view;
         qty[d.stamp] = 1;
         renderMember();
-        toast(r.earned ? `🎁 Card complete! Reward earned: ${r.reward}` : `Stamped ✓`);
+        toast(r.earned ? `🎁 Card complete! Reward earned: ${r.reward}` : r.outsideHours ? 'Stamped — note: outside trading hours, so it will be flagged for review' : `Stamped ✓`);
       } catch (err) {
         toast(err.message, true);
         b.disabled = false;
@@ -624,6 +639,29 @@ async function renderSettings() {
         .join('')}</tbody></table>
       <p class="small muted">Staff can scan, stamp and redeem. Managers can also see the dashboard, edit cards and posts, send messages and manage the team.</p>
     </div>
+    <form class="card" id="rf" style="margin-top:16px">
+      <strong>Stamp rules</strong>
+      <p class="small muted" style="margin:4px 0 0">Stops stamps being given away. Managers can always override these limits.</p>
+      <label class="check" style="margin-top:12px"><input type="checkbox" name="require_bill" ${st.require_bill ? 'checked' : ''} /> <span>Staff must enter the bill / slip number to stamp (each bill can only be used once per card)</span></label>
+      <label class="check"><input type="checkbox" name="bill_resets_daily" ${st.bill_resets_daily ? 'checked' : ''} /> <span>Our till's bill numbers start again every day</span></label>
+      <div class="row">
+        <label>Hours between stamps on a card<input name="visit_hours" type="number" min="0" max="24" value="${st.visit_hours}" /></label>
+        <label>Max stamps per card per day<input name="max_per_card_per_day" type="number" min="1" max="50" value="${st.max_per_card_per_day}" /></label>
+        <label>Max stamps staff can add per scan<input name="staff_max_per_scan" type="number" min="1" max="10" value="${st.staff_max_per_scan}" /></label>
+      </div>
+      <div class="row">
+        <label>Trading hours — open<input name="open_time" type="time" value="${esc(st.open_time)}" /></label>
+        <label>Close <span class="muted" style="font-weight:400">(after midnight is fine)</span><input name="close_time" type="time" value="${esc(st.close_time)}" /></label>
+      </div>
+      <p class="small muted" style="margin-top:0">"Hours between stamps" = one stamp per card per visit (0 switches it off). Stamps outside trading hours are allowed but flagged on the Integrity tab. Leave blank to switch this off.</p>
+      <strong style="display:block;margin-top:8px">Staff bonus targets (per month)</strong>
+      <div class="row">
+        <label>Spot checks passed<input name="bonus_min_checks" type="number" min="0" value="${st.bonus_min_checks}" /></label>
+        <label>New regulars signed up<input name="bonus_min_new_regulars" type="number" min="0" value="${st.bonus_min_new_regulars}" /></label>
+      </div>
+      <p class="small muted" style="margin-top:0">A "new regular" is a customer whose first stamp this staff member gave, who then came back on another day. Staff also need no failed spot checks to qualify.</p>
+      <button class="btn primary">Save stamp rules</button>
+    </form>
     <form class="card" id="bf" style="margin-top:16px">
       <strong>Birthday reward</strong>
       <label class="check" style="margin-top:12px"><input type="checkbox" name="birthday_enabled" ${st.birthday_enabled ? 'checked' : ''} /> <span>Give members a reward in their birthday month</span></label>
@@ -662,7 +700,98 @@ async function renderSettings() {
       toast(err.message, true);
     }
   };
+  $('#rf').onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await api('/api/s/settings', {
+        method: 'PATCH',
+        body: {
+          require_bill: f.require_bill.checked, bill_resets_daily: f.bill_resets_daily.checked,
+          visit_hours: Number(f.visit_hours.value), max_per_card_per_day: Number(f.max_per_card_per_day.value), staff_max_per_scan: Number(f.staff_max_per_scan.value),
+          open_time: f.open_time.value, close_time: f.close_time.value,
+          bonus_min_checks: Number(f.bonus_min_checks.value), bonus_min_new_regulars: Number(f.bonus_min_new_regulars.value),
+        },
+      });
+      me = await api('/api/s/me');
+      toast('Stamp rules saved');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
   $('#poster').onclick = () => window.open('/api/s/poster', '_blank');
+}
+
+// ------------------------------------------------------------------ integrity
+let integrityDays = 30;
+async function renderIntegrity() {
+  const r = await api('/api/s/integrity?days=' + integrityDays);
+  const progs = (b) => Object.entries(b.programs).map(([p, q]) => `${esc(r.program_names[p] || 'Card')} ×${q}`).join(', ');
+  const when = (b) => `${fmtDate(b.created_at)}, ${new Date(b.created_at).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' })}`;
+  const icon = { red: '🔴', warn: '⚠️', info: 'ℹ️' };
+  $('#main').innerHTML = `
+    <div class="toolbar"><h2>Integrity</h2>
+      <span class="row" style="flex:none">
+        <select id="period" style="width:auto"><option value="7" ${integrityDays === 7 ? 'selected' : ''}>Last 7 days</option><option value="30" ${integrityDays === 30 ? 'selected' : ''}>Last 30 days</option></select>
+        <a class="btn sm" href="/api/s/bills.csv?days=${integrityDays}">Bills (CSV)</a>
+      </span></div>
+
+    <div class="card">
+      <strong>This week's spot checks</strong>
+      <p class="small muted" style="margin:4px 0 10px">Look each bill up on your till. Does it show what was stamped, for this customer? Takes a minute a week and keeps everyone honest.</p>
+      ${r.spot_checks.length
+        ? `<table class="t"><thead><tr><th>Bill</th><th>When</th><th>Stamped</th><th>By</th><th></th></tr></thead><tbody>${r.spot_checks
+            .map((b) => `<tr><td><strong>${esc(b.ref)}</strong></td><td class="small">${when(b)}</td>
+              <td class="small">${progs(b)}<div class="muted">${esc(b.member_name || '')}</div></td><td class="small">${esc(b.staff_name)}</td>
+              <td style="text-align:right;white-space:nowrap"><button class="btn sm" data-ok="${esc(b.id)}">✓ Matches</button> <button class="btn sm danger" data-bad="${esc(b.id)}">✗ Problem</button></td></tr>`)
+            .join('')}</tbody></table>`
+        : `<p class="muted" style="margin:0">${r.bills_total ? 'All done for this week ✓' : 'No bills recorded yet — stamps need a bill number once "Stamp rules" are on.'}</p>`}
+    </div>
+
+    <div class="card" style="margin-top:16px;overflow-x:auto">
+      <strong>Staff scorecards — last ${r.days} days</strong>
+      <p class="small muted" style="margin:4px 0 10px">Bonus target for this period: ${r.targets.checks} spot check${r.targets.checks === 1 ? '' : 's'} passed and ${r.targets.new_regulars} new regular${r.targets.new_regulars === 1 ? '' : 's'}, with no failed checks. Change targets in Team &amp; settings.</p>
+      <table class="t"><thead><tr><th>Staff</th><th class="num">Stamps</th><th class="num">New regulars</th><th class="num">Checks ✓/✗</th><th class="num">Undos</th><th class="num">After hours</th><th class="num">Top-3 share</th><th>Bonus</th></tr></thead><tbody>${
+        r.scorecards
+          .map((s) => `<tr><td><strong>${esc(s.name)}</strong>${s.role === 'admin' ? ' <span class="pill off">manager</span>' : ''}<div class="small muted">${s.unique_members} customers · ${s.redemptions} redeemed</div></td>
+            <td class="num">${s.stamps}</td><td class="num">${s.new_regulars}<div class="small muted">of ${s.new_members} new</div></td>
+            <td class="num">${s.checks_passed} / ${s.checks_failed ? `<strong style="color:var(--danger)">${s.checks_failed}</strong>` : 0}</td>
+            <td class="num">${s.undos}</td><td class="num">${s.outside_hours}</td><td class="num">${s.stamps ? s.top_share + '%' : '—'}</td>
+            <td>${s.bonus_eligible ? '<span class="pill">✓ Eligible</span>' : `<span class="small muted">Needs ${esc(s.bonus_missing.join(', '))}</span>`}</td></tr>`)
+          .join('') || '<tr><td colspan="8" class="muted">No staff activity yet.</td></tr>'
+      }</tbody></table>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <strong>Warning signs (${r.flags.length})</strong>
+      <p class="small muted" style="margin:4px 0 6px">Flags are prompts to look closer, not proof of anything — a regular served by the same barista every day is normal.</p>
+      <ul class="act">${
+        r.flags
+          .map((f) => `<li><span>${icon[f.level]} <strong>${esc(f.staff_name)}</strong>: ${esc(f.text)}</span>${f.member_code ? `<button class="btn sm" data-member="${esc(f.member_code)}">View customer</button>` : ''}</li>`)
+          .join('') || '<li class="muted">Nothing to flag 👍</li>'
+      }</ul>
+    </div>
+
+    ${r.checked.length ? `<div class="card" style="margin-top:16px"><strong>Recently checked</strong><ul class="act">${r.checked
+      .map((b) => `<li><span>${b.audit.result === 'ok' ? '✓' : '🔴'} Bill <strong>${esc(b.ref)}</strong> · ${esc(b.staff_name)} · ${when(b)}${b.audit.note ? ` · <em>${esc(b.audit.note)}</em>` : ''}</span><span class="small muted">checked by ${esc(b.audit.by)}</span></li>`)
+      .join('')}</ul></div>` : ''}`;
+
+  $('#period').onchange = (e) => ((integrityDays = Number(e.target.value)), renderIntegrity());
+  $('#main').onclick = async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.member) return openMember(b.dataset.member);
+    const id = b.dataset.ok || b.dataset.bad;
+    if (!id) return;
+    if (b.dataset.ok) {
+      await api(`/api/s/bills/${encodeURIComponent(id)}/audit`, { body: { result: 'ok' } }).catch((err) => toast(err.message, true));
+      return renderIntegrity();
+    }
+    dialog('What was wrong with this bill?', '<label>Note<input name="note" required placeholder="e.g. no coffee on the till slip, or a different table" /></label>', async (fd) => {
+      await api(`/api/s/bills/${encodeURIComponent(id)}/audit`, { body: { result: 'problem', note: fd.get('note') } });
+      renderIntegrity();
+    }, 'Record problem');
+  };
 }
 
 // ------------------------------------------------------------------ boot

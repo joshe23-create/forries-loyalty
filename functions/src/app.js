@@ -6,11 +6,14 @@ const { db, col, iso, daysAgo, seedDefaults, Timestamp } = require('./db');
 const auth = require('./auth');
 const L = require('./loyalty');
 const notify = require('./notify');
+const integrity = require('./integrity');
 
 const env = process.env;
 const BRAND = env.BRAND_NAME || 'Forries';
 const DEMO = env.DEMO_MODE === 'true';
 const MAX_STAMPS = Number(env.MAX_STAMPS_PER_SCAN || 10);
+// Venue logo (dark version) for the printable poster.
+const LOGO_INK = require('fs').readFileSync(require('path').join(__dirname, 'assets', 'logo-ink.svg'), 'utf8');
 
 const app = express();
 app.set('trust proxy', true);
@@ -357,7 +360,12 @@ s.use(auth.requireStaff);
 app.use('/api/s', s);
 const admin = auth.requireAdmin;
 
-s.get('/me', (req, res) => res.json(req.staff));
+s.get('/me', h(async (req, res) => {
+  const st = await L.getSettings();
+  // Stamp rules the staff screen needs (managers aren't bound by the per-scan limit).
+  const rules = { require_bill: st.requireBill, max_per_scan: req.staff.role === 'admin' ? MAX_STAMPS : Math.min(st.staffMaxPerScan, MAX_STAMPS), max_per_card_per_day: st.maxPerCardPerDay, visit_hours: st.visitHours };
+  res.json({ ...req.staff, rules });
+}));
 
 const memberRow = (m) => ({ code: m.code, name: m.name, email: m.email || null, phone: m.phone || null, last_visit_at: iso(m.lastVisitAt), created_at: iso(m.createdAt) });
 
@@ -397,6 +405,7 @@ async function staffMemberView(code) {
     recent: recent.map((t) => ({
       id: t.id, type: t.type, qty: t.qty, created_at: iso(t.createdAt), undone: t.undone ? 1 : 0, program_id: t.programId || null,
       program: t.programName || null, emoji: t.emoji || null, voucher: t.voucherTitle || null, staff: t.staffName || null,
+      bill_ref: t.billRef || null, outside_hours: !!t.outsideHours,
       can_undo: t.type === 'stamp' && !t.undone && member.lastStampTx?.[t.programId] === t.id && Date.now() - t.createdAt.toMillis() < L.UNDO_MINUTES * 60e3,
     })),
   };
@@ -407,7 +416,7 @@ s.get('/members/:code', memberByCode, h(async (req, res) => res.json(await staff
 s.post('/members/:code/stamp', memberByCode, h(async (req, res) => {
   const qty = Number(req.body?.qty || 1);
   if (!Number.isInteger(qty) || qty < 1 || qty > MAX_STAMPS) return bad(res, `You can add 1–${MAX_STAMPS} stamps at a time`);
-  const r = await L.addStamps(req.target.code, String(req.body?.program_id), qty, req.staff);
+  const r = await L.addStamps(req.target.code, String(req.body?.program_id), qty, req.staff, { billRef: req.body?.bill_ref });
   res.json({ ...r, view: await staffMemberView(req.target.code) });
 }));
 
@@ -611,6 +620,15 @@ s.get('/settings', admin, h(async (req, res) => {
   res.json({
     birthday_enabled: st.birthdayEnabled,
     birthday_reward: st.birthdayReward,
+    require_bill: st.requireBill,
+    bill_resets_daily: st.billResetsDaily,
+    max_per_card_per_day: st.maxPerCardPerDay,
+    staff_max_per_scan: st.staffMaxPerScan,
+    visit_hours: st.visitHours,
+    open_time: st.openTime,
+    close_time: st.closeTime,
+    bonus_min_checks: st.bonusMinChecks,
+    bonus_min_new_regulars: st.bonusMinNewRegulars,
     channels: { email: notify.emailEnabled(), whatsapp: notify.whatsappEnabled() },
     whatsapp_templates: { otp: env.WHATSAPP_OTP_TEMPLATE || null, birthday: env.WHATSAPP_BIRTHDAY_TEMPLATE || null },
     signup_url: baseUrl(req),
@@ -621,6 +639,24 @@ s.patch('/settings', admin, h(async (req, res) => {
   const f = {};
   if (b.birthday_enabled !== undefined) f.birthdayEnabled = !!b.birthday_enabled;
   if (b.birthday_reward) f.birthdayReward = String(b.birthday_reward).trim().slice(0, 120);
+  if (b.require_bill !== undefined) f.requireBill = !!b.require_bill;
+  if (b.bill_resets_daily !== undefined) f.billResetsDaily = !!b.bill_resets_daily;
+  const int = (key, field, min, max, label) => {
+    if (b[key] === undefined) return;
+    const v = Number(b[key]);
+    if (!Number.isInteger(v) || v < min || v > max) throw new L.UserError(`${label} must be ${min}–${max}`);
+    f[field] = v;
+  };
+  int('max_per_card_per_day', 'maxPerCardPerDay', 1, 50, 'Daily stamps per card');
+  int('staff_max_per_scan', 'staffMaxPerScan', 1, MAX_STAMPS, 'Staff stamps per scan');
+  int('visit_hours', 'visitHours', 0, 24, 'Hours between stamps on a card');
+  int('bonus_min_checks', 'bonusMinChecks', 0, 100, 'Spot checks needed');
+  int('bonus_min_new_regulars', 'bonusMinNewRegulars', 0, 500, 'New regulars needed');
+  for (const [key, field] of [['open_time', 'openTime'], ['close_time', 'closeTime']]) {
+    if (b[key] === undefined) continue;
+    if (b[key] && !/^([01]\d|2[0-3]):[0-5]\d$/.test(b[key])) throw new L.UserError('Times must be HH:MM, e.g. 10:00');
+    f[field] = b[key] || '';
+  }
   await L.saveSettings(f);
   res.json({ ok: true });
 }));
@@ -668,6 +704,18 @@ s.post('/campaigns', admin, h(async (req, res) => {
   res.json({ ok: true, id: ref.id, recipients: recipients.length });
 }));
 
+// --- staff integrity: scorecards, flags, bill spot checks
+const periodDays = (q) => (Number(q) === 7 ? 7 : 30);
+s.get('/integrity', admin, h(async (req, res) => res.json(await integrity.integrityReport(periodDays(req.query.days)))));
+s.post('/bills/:id/audit', admin, h(async (req, res) => {
+  await integrity.auditBill(req.params.id, req.body?.result, req.body?.note, req.staff);
+  res.json({ ok: true });
+}));
+s.get('/bills.csv', admin, h(async (req, res) => {
+  const days = periodDays(req.query.days);
+  res.attachment(`bills-last-${days}-days-${L.today().iso}.csv`).type('text/csv').send(await integrity.billsCsv(days));
+}));
+
 // --- printable sign-up poster with a QR code that opens the join page
 s.get('/poster', admin, h(async (req, res) => {
   const url = baseUrl(req);
@@ -676,11 +724,11 @@ s.get('/poster', admin, h(async (req, res) => {
   res.type('html').send(`<!doctype html><html><head><meta charset="utf-8"><title>${e(BRAND)} Rewards poster</title>
   <style>@page{size:A4;margin:0}body{margin:0;font-family:system-ui,sans-serif;color:#1e2420}
   .p{width:210mm;min-height:297mm;box-sizing:border-box;padding:22mm 18mm;text-align:center;background:#f6f1e7;display:flex;flex-direction:column;align-items:center}
-  h1{font-family:Georgia,serif;font-size:58px;color:#1f4d3a;margin:0}.sub{letter-spacing:.3em;text-transform:uppercase;color:#a8862f;font-weight:700;margin:6px 0 26px}
+  h1{font-family:Georgia,serif;font-size:58px;color:#1f4d3a;margin:0}.logo{width:150mm;margin:0 auto}.logo svg{display:block;width:100%;height:auto}.sub{letter-spacing:.3em;text-transform:uppercase;color:#a8862f;font-weight:700;margin:6px 0 26px}
   .big{font-size:30px;font-weight:700;margin:0 0 24px}.qr{background:#fff;padding:22px;border-radius:24px;width:110mm;border:3px solid #c8a24a}.qr svg{display:block;width:100%;height:auto}
   ol{text-align:left;font-size:20px;line-height:1.7;margin:28px auto 0;max-width:140mm}.url{margin-top:auto;color:#6c736e;font-size:16px}
   @media screen{body{background:#ddd}.p{margin:16px auto;box-shadow:0 2px 12px rgba(0,0,0,.2)}}</style></head>
-  <body onload="setTimeout(()=>print(),300)"><div class="p"><h1>${e(BRAND)}</h1><div class="sub">Rewards</div>
+  <body onload="setTimeout(()=>print(),300)"><div class="p"><div class="logo">${LOGO_INK}</div><div class="sub">Rewards</div>
   <p class="big">Scan to join — it's free!</p><div class="qr">${qr}</div>
   <ol><li>Scan the code with your phone camera</li><li>Show your card every time you order</li><li>Fill a card &rarr; get a reward 🎁 &nbsp;Plus a birthday treat 🎂</li></ol>
   <div class="url">${e(url.replace(/^https?:\/\//, ''))}</div></div></body></html>`);
