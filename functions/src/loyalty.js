@@ -97,7 +97,7 @@ async function memberSummary(member, programs) {
 /** "#00 1234 " -> "001234". Bill/slip numbers: letters, digits and dashes only. */
 const normalizeBill = (ref) => String(ref || '').toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 30);
 
-async function addStamps(code, programId, qty, staff, { billRef } = {}) {
+async function addStamps(code, programId, qty, staff, { billRef, via = 'manual' } = {}) {
   const settings = await getSettings();
   const isManager = staff.role === 'admin';
   if (!isManager && qty > settings.staffMaxPerScan)
@@ -164,7 +164,7 @@ async function addStamps(code, programId, qty, staff, { billRef } = {}) {
     t.set(txRef, {
       memberCode: code, staffId: staff.id, staffName: staff.name, type: 'stamp', programId, programName: program.name, emoji: program.emoji,
       qty, stampsBefore: before, voucherIds, prevTxId: member.lastStampTx?.[programId] || null, undone: false, createdAt: Timestamp.now(),
-      billRef: bill || null, billKey, outsideHours: flaggedHours, localTime: clock.hhmm, newVisitDay, setFirstStaff,
+      billRef: bill || null, billKey, outsideHours: flaggedHours, localTime: clock.hhmm, newVisitDay, setFirstStaff, via,
     });
     if (billRefDoc) {
       if (bSnap.exists) t.update(billRefDoc, { [`programs.${programId}`]: qty });
@@ -276,6 +276,9 @@ async function runBirthdays(baseUrl) {
     const member = { code: d.id, ...d.data() };
     if (!(await issueBirthdayVoucher(member, settings))) continue;
     issued++;
+    // Lazy-required to avoid a require cycle (push/wallet load loyalty.js).
+    await require('./push').sendToMember(member.code, { title: `🎂 Happy birthday month, ${member.name.split(' ')[0]}!`, body: `${settings.birthdayReward} — it's waiting in your rewards.`, url: '/?tab=rewards', tag: 'birthday' }).catch(() => {});
+    await require('./wallet').refreshWallets(member.code).catch(() => {});
     const first = member.name.split(' ')[0];
     try {
       if (member.marketingEmail && member.email && notify.emailEnabled()) {

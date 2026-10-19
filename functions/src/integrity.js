@@ -35,7 +35,7 @@ async function integrityReport(days) {
   const staff = Object.fromEntries(
     staffSnap.docs.map((d) => [d.id, {
       id: d.id, name: d.data().name, role: d.data().role,
-      stamps: 0, stampTx: 0, undos: 0, outsideHours: 0, redemptions: 0, members: {}, pairDays: {},
+      stamps: 0, stampTx: 0, undos: 0, outsideHours: 0, redemptions: 0, manual: 0, members: {}, pairDays: {},
       newMembers: 0, newRegulars: 0, checksPassed: 0, checksFailed: 0,
     }])
   );
@@ -54,6 +54,7 @@ async function integrityReport(days) {
     }
     s.stamps += t.qty;
     s.stampTx++;
+    if (t.via === 'manual') s.manual++;
     s.members[t.memberCode] = (s.members[t.memberCode] || 0) + t.qty;
     const day = L.localDay(t.createdAt.toDate());
     (s.pairDays[t.memberCode] ??= new Set()).add(day);
@@ -103,6 +104,8 @@ async function integrityReport(days) {
       if (set.size >= pairLimit)
         flags.push({ level: 'info', staff_id: s.id, staff_name: s.name, member_code: code, text: `Stamped ${memberNames[code] || code} on ${set.size} different days — normal for a regular, but worth a look` });
     }
+    if (s.manual >= 5 && s.manual > 0.3 * s.stampTx)
+      flags.push({ level: 'warn', staff_id: s.id, staff_name: s.name, text: `${s.manual} of ${s.stampTx} stamps were on typed-in card codes instead of scanning the customer's live card` });
     if (s.undos >= 5 && s.undos > 0.15 * (s.stampTx + s.undos))
       flags.push({ level: 'warn', staff_id: s.id, staff_name: s.name, text: `High undo rate: ${s.undos} undone out of ${s.stampTx + s.undos} stamps` });
     const top3 = Object.values(s.members).sort((a, b) => b - a).slice(0, 3).reduce((a, b) => a + b, 0);
@@ -126,7 +129,7 @@ async function integrityReport(days) {
       if (red) missing.push('no failed spot checks');
       return {
         id: s.id, name: s.name, role: s.role, stamps: s.stamps, stamp_tx: s.stampTx, undos: s.undos, redemptions: s.redemptions,
-        unique_members: Object.keys(s.members).length, top_share: s.topShare, outside_hours: s.outsideHours,
+        unique_members: Object.keys(s.members).length, top_share: s.topShare, outside_hours: s.outsideHours, manual_entries: s.manual,
         new_members: s.newMembers, new_regulars: s.newRegulars, checks_passed: s.checksPassed, checks_failed: s.checksFailed,
         red_flags: red, warnings: warn, bonus_eligible: missing.length === 0, bonus_missing: missing,
       };

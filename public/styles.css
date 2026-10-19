@@ -62,6 +62,15 @@ main.view { flex: 1; padding: 16px 16px 96px; }
 .member-card .name { font-weight: 700; font-size: 18px; }
 .member-card .qr { background: #fff; border-radius: 14px; padding: 12px; width: min(240px, 70vw); margin: 14px auto 10px; }
 .member-card .qr img { display: block; width: 100%; height: auto; }
+.member-card .qr svg { display: block; width: 100%; height: auto; }
+.member-card .live { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .15em; color: var(--accent); }
+.member-card .live .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; box-shadow: 0 0 0 0 rgba(74, 222, 128, .7); animation: pulse 1.6s infinite; }
+.member-card .countdown { width: 60px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.2); overflow: hidden; }
+.member-card .countdown i { display: block; height: 100%; background: var(--accent); transition: width 1s linear; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 8px rgba(74, 222, 128, 0); } 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
+@media (prefers-reduced-motion: reduce) { .member-card .live .dot { animation: none; } .member-card .countdown i { transition: none; } }
+.wallet-row { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+.wallet-btn { background: #000; color: #fff; border-color: #000; border-radius: 10px; padding: 10px 18px; }
 .member-card .code { font-family: ui-monospace, Menlo, Consolas, monospace; letter-spacing: .18em; font-size: 18px; color: var(--accent); }
 .member-card .hint { font-size: 13px; opacity: .85; margin-top: 4px; }
 

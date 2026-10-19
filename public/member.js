@@ -221,10 +221,12 @@ function renderCard() {
   main.innerHTML = `
     <div class="member-card">
       <div class="name">${esc(m.name)}</div>
-      <div class="qr"><img src="/api/m/qr.svg?c=${encodeURIComponent(m.code)}" alt="Membership QR code ${esc(m.code)}" width="240" height="240" /></div>
-      <div class="code">${esc(m.code.replace(/(.{4})/, '$1 '))}</div>
-      <div class="hint">Show this to the team when you order</div>
+      <div class="qr" id="liveqr" role="img" aria-label="Your live membership QR code"></div>
+      <div class="live"><span class="dot"></span> LIVE CODE <span class="countdown"><i id="qrbar"></i></span></div>
+      <div class="hint">Show this to the team when you order · screenshots won't work</div>
     </div>
+    <div id="pushTip"></div>
+    <div id="walletBtns"></div>
     ${data.vouchers.length ? `<div class="card voucher" style="margin-top:16px;cursor:pointer" id="toRewards"><div class="ico">🎁</div><div><div class="t">You have ${data.vouchers.length} reward${data.vouchers.length > 1 ? 's' : ''} ready!</div><div class="small muted">Tap to see them</div></div></div>` : ''}
     <div id="installTip"></div>
     <div class="section-title">Your stamp cards</div>
@@ -243,13 +245,124 @@ function renderCard() {
   lastStamps = Object.fromEntries(data.cards.map((c) => [c.program_id, c.stamps]));
   $('#toRewards')?.addEventListener('click', () => ((tab = 'rewards'), renderApp()));
   renderInstallTip();
+  startLiveQr();
+  renderPushTip();
+  renderWalletButtons();
+}
+
+// ------------------------------------------------------------------ live QR
+// A new code every 30 seconds (TOTP, same as Google Wallet's rotating barcode), computed on the phone
+// from the member's secret, so it works offline and a screenshot is useless a minute later.
+const hexBytes = (h) => new Uint8Array(h.match(/../g).map((x) => parseInt(x, 16)));
+async function totp(keyHex, counter, digits) {
+  const key = await crypto.subtle.importKey('raw', hexBytes(keyHex), { name: 'HMAC', hash: 'SHA-1' }, false, ['sign']);
+  const msg = new ArrayBuffer(8);
+  new DataView(msg).setBigUint64(0, BigInt(counter));
+  const h = new Uint8Array(await crypto.subtle.sign('HMAC', key, msg));
+  const o = h[h.length - 1] & 0xf;
+  const bin = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(bin % 10 ** digits).padStart(digits, '0');
+}
+let liveTimer = null, liveCounter = null;
+function startLiveQr() {
+  clearInterval(liveTimer);
+  liveCounter = null;
+  const tick = async () => {
+    const el = $('#liveqr');
+    if (!el) return clearInterval(liveTimer);
+    const { key, period, digits } = data.qr;
+    const now = Date.now() / 1000;
+    const counter = Math.floor(now / period);
+    $('#qrbar').style.width = `${(1 - (now % period) / period) * 100}%`;
+    if (counter === liveCounter) return;
+    liveCounter = counter;
+    const text = `FR2:${data.member.code}:${counter * period}:${await totp(key, counter, digits)}`;
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    el.innerHTML = qr.createSvgTag({ cellSize: 4, margin: 2, scalable: true });
+  };
+  tick();
+  liveTimer = setInterval(tick, 1000);
+}
+
+// ------------------------------------------------------------------ push notifications
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const b64ToBytes = (b64) => {
+  const s = atob((b64 + '='.repeat((4 - (b64.length % 4)) % 4)).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+};
+async function currentPushSub() {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+async function enablePush(prefs) {
+  if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications are blocked — allow them in your phone settings for this app');
+  const { publicKey } = await api('/api/push/key');
+  const reg = await navigator.serviceWorker.ready;
+  const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) }));
+  await api('/api/m/push/subscribe', { body: { subscription: sub.toJSON(), ...prefs } });
+}
+async function disablePush() {
+  const sub = await currentPushSub();
+  if (!sub) return;
+  await api('/api/m/push/unsubscribe', { body: { endpoint: sub.endpoint } }).catch(() => {});
+  await sub.unsubscribe().catch(() => {});
+}
+async function renderPushTip() {
+  const el = $('#pushTip');
+  if (!el) return;
+  let dismissed = false;
+  try { dismissed = localStorage.getItem('pushTipDismissed') === '1'; } catch {}
+  if (dismissed || !pushSupported() || Notification.permission !== 'default' || (await currentPushSub())) return (el.innerHTML = '');
+  el.innerHTML = `<div class="install-tip" style="margin-top:16px"><span style="flex:1">🔔 Get a heads-up when you earn a stamp or reward.</span>
+    <button class="btn sm primary" id="pushOn">Turn on</button><button class="btn sm" id="pushX" aria-label="Dismiss">✕</button></div>`;
+  $('#pushOn').onclick = async () => {
+    try {
+      await enablePush({ updates: true, marketing: false });
+      el.innerHTML = '';
+      toast('Notifications on 🔔');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+  $('#pushX').onclick = () => {
+    try { localStorage.setItem('pushTipDismissed', '1'); } catch {}
+    el.innerHTML = '';
+  };
+}
+
+// ------------------------------------------------------------------ wallet cards
+function renderWalletButtons() {
+  const el = $('#walletBtns');
+  const w = data.wallet || {};
+  const showApple = w.apple && isIOS;
+  const showGoogle = w.google && !isIOS;
+  if (!el || (!showApple && !showGoogle)) return;
+  el.innerHTML = `<div class="wallet-row">
+    ${showApple ? `<a class="btn wallet-btn" href="/api/m/wallet/apple"><span aria-hidden="true"></span> ${w.has_apple ? 'Update Apple Wallet card' : 'Add to Apple Wallet'}</a>` : ''}
+    ${showGoogle ? `<button class="btn wallet-btn" id="gwallet">${w.has_google ? 'Open in Google Wallet' : 'Add to Google Wallet'}</button>` : ''}
+  </div>
+  ${showApple ? '<p class="small muted" style="text-align:center;margin:6px 0 0">Your Wallet card shows your stamps and pops up near the pub. To get stamped, open this live card.</p>' : ''}`;
+  $('#gwallet')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      location.href = (await api('/api/m/wallet/google')).url;
+    } catch (err) {
+      toast(err.message, true);
+      e.target.disabled = false;
+    }
+  });
 }
 
 function renderRewards() {
   $('#app-main').innerHTML = `
     <h2 style="margin-top:4px">Your rewards</h2>
     ${data.vouchers.length
-      ? `<p class="muted">To claim, show your card's QR code to the team and tell them which reward you'd like.</p>
+      ? `<p class="muted">To claim, show your live card to the team and tell them which reward you'd like.</p>
          <div class="stack">${data.vouchers
            .map(
              (v) => `<div class="card voucher"><div class="ico">${v.source === 'birthday' ? '🎂' : '🎁'}</div><div>
@@ -293,12 +406,15 @@ async function renderProfile() {
       ${m.birthday
         ? `<label>Birthday<input value="${esc(new Date(2000, Number(m.birthday.slice(0, 2)) - 1, Number(m.birthday.slice(3))).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' }))}" disabled /></label>`
         : `<label>Birthday <span class="muted" style="font-weight:400">(can only be set once)</span>${birthdayFields()}</label>`}
+      <label>Card number<input value="${esc(m.code.replace(/(.{4})/, '$1 '))}" disabled /></label>
       <div class="section-title" style="margin-top:14px">Marketing</div>
       <label class="check"><input type="checkbox" name="marketing_email" ${m.marketing_email ? 'checked' : ''} /> <span>Email me specials and events</span></label>
       <label class="check"><input type="checkbox" name="marketing_whatsapp" ${m.marketing_whatsapp ? 'checked' : ''} /> <span>WhatsApp me specials and events</span></label>
       <p class="error" id="err"></p>
       <button class="btn primary block" type="submit">Save</button>
     </form>
+    <div class="section-title">Notifications on this phone</div>
+    <div class="card" id="notif"><p class="muted" style="margin:0">Checking…</p></div>
     <div class="section-title">Recent activity</div>
     <div class="card"><ul class="history" id="hist"><li class="muted">Loading…</li></ul></div>
     <div class="section-title">Account</div>
@@ -335,10 +451,42 @@ async function renderProfile() {
     toast('Your account has been deleted');
     showWelcome();
   };
+  renderNotificationPrefs();
   const hist = await api('/api/m/history');
   const label = (h) =>
     h.type === 'stamp' ? `${esc(h.emoji || '⭐')} ${h.qty} stamp${h.qty > 1 ? 's' : ''} · ${esc(h.program)}` : h.type === 'redeem' ? `🎁 Redeemed: ${esc(h.voucher)}` : `🎉 Gift: ${esc(h.voucher)}`;
   $('#hist').innerHTML = hist.length ? hist.map((h) => `<li><span>${label(h)}</span><span class="muted">${fmtDate(h.created_at)}</span></li>`).join('') : '<li class="muted">Nothing yet</li>';
+}
+
+async function renderNotificationPrefs() {
+  const el = $('#notif');
+  if (!el) return;
+  if (!pushSupported()) {
+    el.innerHTML = `<p class="small muted" style="margin:0">${isIOS && !isStandalone()
+      ? 'On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then open it from there to turn on notifications.'
+      : "This browser doesn't support notifications."}</p>`;
+    return;
+  }
+  const sub = await currentPushSub();
+  const state = sub ? await api('/api/m/push').catch(() => ({})) : {};
+  const blocked = Notification.permission === 'denied';
+  el.innerHTML = `
+    <label class="check"><input type="checkbox" id="nUpdates" ${sub && state.updates ? 'checked' : ''} ${blocked ? 'disabled' : ''} /> <span>Stamps and rewards on my card</span></label>
+    <label class="check"><input type="checkbox" id="nMarketing" ${sub && state.marketing ? 'checked' : ''} ${blocked ? 'disabled' : ''} /> <span>Specials and events</span></label>
+    ${blocked ? '<p class="small muted" style="margin:0">Notifications are blocked for this app — allow them in your phone settings.</p>' : ''}`;
+  const save = async () => {
+    const updates = $('#nUpdates').checked, marketing = $('#nMarketing').checked;
+    try {
+      if (!updates && !marketing) await disablePush();
+      else await enablePush({ updates, marketing });
+      toast('Notification settings saved');
+    } catch (err) {
+      toast(err.message, true);
+      renderNotificationPrefs();
+    }
+  };
+  $('#nUpdates').onchange = save;
+  $('#nMarketing').onchange = save;
 }
 
 function celebrate(v) {
@@ -380,7 +528,7 @@ function renderInstallTip() {
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   if (!deferredInstall && !ios) return (el.innerHTML = '');
   el.innerHTML = `<div class="install-tip" style="margin-top:16px"><span style="flex:1">${
-    ios ? 'Add your card to your home screen: tap <strong>Share</strong> then <strong>Add to Home Screen</strong>.' : 'Add your card to your home screen for quick access.'
+    ios ? 'Add your card to your home screen (tap <strong>Share</strong> then <strong>Add to Home Screen</strong>) — then open it from there to get stamp and reward notifications.' : 'Add your card to your home screen for quick access.'
   }</span>${deferredInstall ? '<button class="btn sm primary" id="inst">Add</button>' : ''}<button class="btn sm" id="instX" aria-label="Dismiss">✕</button></div>`;
   $('#inst')?.addEventListener('click', async () => {
     deferredInstall.prompt();
@@ -399,5 +547,7 @@ function renderInstallTip() {
   brand = await api('/api/brand').catch(() => brand);
   document.title = `${brand.name} Rewards`;
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  const wanted = new URLSearchParams(location.search).get('tab');
+  if (['card', 'rewards', 'specials', 'profile'].includes(wanted)) tab = wanted;
   await loadMe(true);
 })();

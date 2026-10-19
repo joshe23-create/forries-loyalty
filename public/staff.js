@@ -9,6 +9,7 @@ let brand = { name: 'Rewards' };
 let tab = 'scan';
 let current = null; // member view currently open
 let billNo = ''; // bill / slip number typed for the member currently open
+let openedVia = 'manual'; // 'live' when the card was opened by scanning the customer's live QR
 
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -175,6 +176,7 @@ async function startCamera() {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   let last = 0;
+  let checking = false;
   const tick = async (t) => {
     if (!stream) return;
     scanRaf = requestAnimationFrame(tick);
@@ -193,10 +195,20 @@ async function startCamera() {
         text = window.jsQR(ctx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' })?.data;
       }
     } catch {}
-    if (text && stream) {
-      navigator.vibrate?.(80);
-      stopCamera();
-      openMember(text.trim());
+    if (text && stream && !checking) {
+      checking = true;
+      try {
+        const { code } = await api('/api/s/scan', { body: { data: text.trim() } });
+        navigator.vibrate?.(80);
+        stopCamera();
+        openMember(code, false, 'live');
+      } catch (err) {
+        // Screenshot / old QR / not a card: say why, then keep scanning.
+        navigator.vibrate?.([60, 60, 60]);
+        msg.textContent = err.message;
+        toast(err.message, true);
+        setTimeout(() => ((checking = false), stream && (msg.textContent = "Point at the customer's QR code")), 2500);
+      }
     }
   };
   scanRaf = requestAnimationFrame(tick);
@@ -231,7 +243,7 @@ function bindMemberTable(el) {
 }
 
 // ------------------------------------------------------------------ member panel
-async function openMember(code, quiet) {
+async function openMember(code, quiet, via = 'manual') {
   stopCamera();
   let view;
   try {
@@ -243,6 +255,7 @@ async function openMember(code, quiet) {
     return;
   }
   if (current?.member.code !== view.member.code) billNo = '';
+  if (current?.member.code !== view.member.code || via === 'live') openedVia = via;
   current = view;
   renderMember();
 }
@@ -322,7 +335,7 @@ function renderMember() {
       }
       b.disabled = true;
       try {
-        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: d.stamp, qty: qty[d.stamp], bill_ref: billNo } });
+        const r = await api(`/api/s/members/${m.code}/stamp`, { body: { program_id: d.stamp, qty: qty[d.stamp], bill_ref: billNo, via: openedVia } });
         current = r.view;
         qty[d.stamp] = 1;
         renderMember();
@@ -568,13 +581,19 @@ async function renderMessages() {
       <div class="row">
         <label>Channel<select name="channel">
           <option value="email" ${settings.channels.email ? '' : 'disabled'}>Email${settings.channels.email ? '' : ' (not set up)'}</option>
-          <option value="whatsapp" ${settings.channels.whatsapp ? '' : 'disabled'}>WhatsApp${settings.channels.whatsapp ? '' : ' (not set up)'}</option></select></label>
+          <option value="whatsapp" ${settings.channels.whatsapp ? '' : 'disabled'}>WhatsApp${settings.channels.whatsapp ? '' : ' (not set up)'}</option>
+          <option value="push">Push notification (free)</option></select></label>
         <label>Audience<select name="audience"></select></label>
       </div>
       <div id="emailFields">
         <label>Subject<input name="subject" placeholder="e.g. {{name}}, the Springboks are on this Saturday 🏉" /></label>
         <label>Message<textarea name="body" rows="7" placeholder="Hi {{name}},&#10;&#10;…"></textarea></label>
         <p class="small muted">Use <code>{{name}}</code> for the member's first name.</p>
+      </div>
+      <div id="pushFields" class="hidden">
+        <p class="small muted" style="margin-top:0">Goes to the phones of members who turned on "Specials and events" notifications. Keep it short — it shows on their lock screen and opens the What's on tab.</p>
+        <label>Title <span class="muted" style="font-weight:400">(max 60)</span><input name="push_title" maxlength="60" placeholder="e.g. Quiz night tonight 🧠" /></label>
+        <label>Message <span class="muted" style="font-weight:400">(max 200)</span><textarea name="push_body" rows="3" maxlength="200" placeholder="e.g. Teams of up to 6, kicks off at 7pm. Book a table!"></textarea></label>
       </div>
       <div id="waFields" class="hidden">
         <label>Approved template name<input name="template" placeholder="e.g. weekly_specials" /></label>
@@ -588,13 +607,13 @@ async function renderMessages() {
     <div class="card"><table class="t"><thead><tr><th>When</th><th>Message</th><th>Audience</th><th class="num">Sent</th><th class="num">Failed</th></tr></thead><tbody>${
       history
         .map(
-          (c) => `<tr><td class="small">${fmtTime(c.created_at)}<div class="muted">${esc(c.staff || '')}</div></td><td>${c.channel === 'email' ? '✉️ ' + esc(c.subject) : '💬 ' + esc(c.template)}</td>
+          (c) => `<tr><td class="small">${fmtTime(c.created_at)}<div class="muted">${esc(c.staff || '')}</div></td><td>${c.channel === 'email' ? '✉️ ' + esc(c.subject) : c.channel === 'push' ? '🔔 ' + esc(c.subject) : '💬 ' + esc(c.template)}</td>
           <td class="small">${esc(AUD[c.audience] || c.audience)}</td><td class="num">${c.sent}</td><td class="num">${c.failed}</td></tr>`
         )
         .join('') || '<tr><td colspan="5" class="muted">Nothing sent yet.</td></tr>'
     }</tbody></table></div>`;
   const f = $('#cf');
-  if (!settings.channels.email && settings.channels.whatsapp) f.channel.value = 'whatsapp';
+  if (!settings.channels.email) f.channel.value = settings.channels.whatsapp ? 'whatsapp' : 'push';
   const sync = () => {
     const ch = f.channel.value;
     const prev = f.audience.value;
@@ -602,20 +621,24 @@ async function renderMessages() {
     if (prev) f.audience.value = prev;
     $('#emailFields').classList.toggle('hidden', ch !== 'email');
     $('#waFields').classList.toggle('hidden', ch !== 'whatsapp');
+    $('#pushFields').classList.toggle('hidden', ch !== 'push');
   };
   f.channel.onchange = sync;
   sync();
-  if (!settings.channels.email && !settings.channels.whatsapp) {
-    $('#sendBtn').disabled = true;
-    $('#err').textContent = 'Neither email nor WhatsApp is set up on the server yet — see the README.';
-  }
+
   f.onsubmit = async (e) => {
     e.preventDefault();
     const n = counts[`${f.channel.value}:${f.audience.value}`];
-    if (!confirm(`Send this ${f.channel.value === 'email' ? 'email' : 'WhatsApp message'} to ${n} member${n === 1 ? '' : 's'}?`)) return;
+    const ch = f.channel.value;
+    if (!confirm(`Send this ${{ email: 'email', whatsapp: 'WhatsApp message', push: 'push notification' }[ch]} to ${n} member${n === 1 ? '' : 's'}?`)) return;
     try {
       const r = await api('/api/s/campaigns', {
-        body: { channel: f.channel.value, audience: f.audience.value, subject: f.subject.value, body: f.body.value, template: f.template.value.trim(), uses_name: f.uses_name.checked },
+        body: {
+          channel: ch, audience: f.audience.value,
+          subject: ch === 'push' ? f.push_title.value : f.subject.value,
+          body: ch === 'push' ? f.push_body.value : f.body.value,
+          template: f.template.value.trim(), uses_name: f.uses_name.checked,
+        },
       });
       toast(`Sending to ${r.recipients} members…`);
       setTimeout(renderMessages, 1500);
@@ -751,14 +774,14 @@ async function renderIntegrity() {
     <div class="card" style="margin-top:16px;overflow-x:auto">
       <strong>Staff scorecards — last ${r.days} days</strong>
       <p class="small muted" style="margin:4px 0 10px">Bonus target for this period: ${r.targets.checks} spot check${r.targets.checks === 1 ? '' : 's'} passed and ${r.targets.new_regulars} new regular${r.targets.new_regulars === 1 ? '' : 's'}, with no failed checks. Change targets in Team &amp; settings.</p>
-      <table class="t"><thead><tr><th>Staff</th><th class="num">Stamps</th><th class="num">New regulars</th><th class="num">Checks ✓/✗</th><th class="num">Undos</th><th class="num">After hours</th><th class="num">Top-3 share</th><th>Bonus</th></tr></thead><tbody>${
+      <table class="t"><thead><tr><th>Staff</th><th class="num">Stamps</th><th class="num">New regulars</th><th class="num">Checks ✓/✗</th><th class="num">Undos</th><th class="num">Typed codes</th><th class="num">After hours</th><th class="num">Top-3 share</th><th>Bonus</th></tr></thead><tbody>${
         r.scorecards
           .map((s) => `<tr><td><strong>${esc(s.name)}</strong>${s.role === 'admin' ? ' <span class="pill off">manager</span>' : ''}<div class="small muted">${s.unique_members} customers · ${s.redemptions} redeemed</div></td>
             <td class="num">${s.stamps}</td><td class="num">${s.new_regulars}<div class="small muted">of ${s.new_members} new</div></td>
             <td class="num">${s.checks_passed} / ${s.checks_failed ? `<strong style="color:var(--danger)">${s.checks_failed}</strong>` : 0}</td>
-            <td class="num">${s.undos}</td><td class="num">${s.outside_hours}</td><td class="num">${s.stamps ? s.top_share + '%' : '—'}</td>
+            <td class="num">${s.undos}</td><td class="num">${s.manual_entries}</td><td class="num">${s.outside_hours}</td><td class="num">${s.stamps ? s.top_share + '%' : '—'}</td>
             <td>${s.bonus_eligible ? '<span class="pill">✓ Eligible</span>' : `<span class="small muted">Needs ${esc(s.bonus_missing.join(', '))}</span>`}</td></tr>`)
-          .join('') || '<tr><td colspan="8" class="muted">No staff activity yet.</td></tr>'
+          .join('') || '<tr><td colspan="9" class="muted">No staff activity yet.</td></tr>'
       }</tbody></table>
     </div>
 

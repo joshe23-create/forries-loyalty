@@ -7,6 +7,9 @@ const auth = require('./auth');
 const L = require('./loyalty');
 const notify = require('./notify');
 const integrity = require('./integrity');
+const liveqr = require('./liveqr');
+const push = require('./push');
+const wallet = require('./wallet');
 
 const env = process.env;
 const BRAND = env.BRAND_NAME || 'Forries';
@@ -141,6 +144,7 @@ app.get('/api/brand', (_req, res) =>
   })
 );
 app.get('/api/specials', h(async (_req, res) => res.json(await activeSpecials())));
+app.get('/api/push/key', h(async (_req, res) => res.json({ publicKey: await push.publicKey() })));
 
 app.get('/manifest.webmanifest', (_req, res) =>
   res.type('application/manifest+json').json({
@@ -270,13 +274,43 @@ app.use('/api/m', m);
 m.get('/me', h(async (req, res) => {
   // Also issues the birthday reward lazily, so it appears even before the daily job runs.
   await L.issueBirthdayVoucher(req.member);
-  const [summary, specials] = await Promise.all([L.memberSummary(req.member), activeSpecials()]);
-  res.json({ member: publicMember(req.member), ...summary, specials });
+  const [summary, specials, qrKey] = await Promise.all([L.memberSummary(req.member), activeSpecials(), liveqr.ensureQrKey(req.member)]);
+  res.json({
+    member: publicMember(req.member),
+    ...summary,
+    specials,
+    // The live card QR is computed on the phone from this secret (works offline; see liveqr.js).
+    qr: liveqr.qrConfig(qrKey),
+    wallet: { apple: wallet.appleEnabled(), google: wallet.googleEnabled(), has_apple: !!req.member.walletApple, has_google: !!req.member.walletGoogle },
+  });
 }));
 
-m.get('/qr.svg', h(async (req, res) => {
-  const svg = await QRCode.toString(req.member.code, { type: 'svg', margin: 1, errorCorrectionLevel: 'M', color: { dark: '#000000', light: '#ffffff' } });
-  res.type('image/svg+xml').set('Cache-Control', 'private, max-age=86400').send(svg);
+// --- wallet cards
+m.get('/wallet/google', h(async (req, res) => {
+  if (!wallet.googleEnabled()) return bad(res, 'Google Wallet is not set up yet', 503);
+  res.json({ url: await wallet.googleSaveUrl(req.member) });
+}));
+m.get('/wallet/apple', h(async (req, res) => {
+  if (!wallet.appleEnabled()) return bad(res, 'Apple Wallet is not set up yet', 503);
+  const pass = await wallet.buildApplePass(req.member);
+  await col('members').doc(req.member.code).update({ walletApple: true, appleUpdatedAt: Timestamp.now() });
+  res.set({ 'Content-Type': 'application/vnd.apple.pkpass', 'Content-Disposition': 'attachment; filename="rewards.pkpass"', 'Cache-Control': 'no-store' }).send(pass);
+}));
+
+// --- push notifications
+m.get('/push', h(async (req, res) => {
+  const subs = await push.memberSubs(req.member.code);
+  res.json({ devices: subs.length, updates: subs.some((d) => d.data().updates), marketing: subs.some((d) => d.data().marketing) });
+}));
+m.post('/push/subscribe', h(async (req, res) => {
+  const { subscription, updates, marketing } = req.body || {};
+  if (!push.validSubscription(subscription)) return bad(res, "This browser didn't give us a valid notification subscription");
+  await push.subscribe(req.member.code, subscription, { updates: updates !== false, marketing: !!marketing });
+  res.json({ ok: true });
+}));
+m.post('/push/unsubscribe', h(async (req, res) => {
+  if (req.body?.endpoint) await push.unsubscribe(req.member.code, req.body.endpoint);
+  res.json({ ok: true });
 }));
 
 async function recentTransactions(code, limit) {
@@ -333,6 +367,54 @@ m.delete('/me', h(async (req, res) => {
   await auth.endMemberSession(req, res);
   res.json({ ok: true });
 }));
+
+// ------------------------------------------------------------------ Apple Wallet web service
+// iPhones holding a card call these (Apple's PassKit web service protocol) to register for and fetch updates.
+const ap = express.Router();
+app.use('/api/applepass/v1', ap);
+const regId = (device, serial) => crypto.createHash('sha256').update(`${device}|${serial}`).digest('hex').slice(0, 40);
+
+async function applePassAuth(req, res, next) {
+  try {
+    if (req.params.passType !== env.APPLE_PASS_TYPE_ID) return res.sendStatus(404);
+    const member = await getMember(cleanCode(req.params.serial));
+    const token = String(req.get('authorization') || '').replace(/^ApplePass /, '');
+    if (!member?.appleAuthToken || token.length !== member.appleAuthToken.length || !crypto.timingSafeEqual(Buffer.from(token), Buffer.from(member.appleAuthToken)))
+      return res.sendStatus(401);
+    req.passMember = member;
+    next();
+  } catch (e) {
+    next(e);
+  }
+}
+ap.post('/devices/:device/registrations/:passType/:serial', applePassAuth, h(async (req, res) => {
+  if (!req.body?.pushToken) return res.sendStatus(400);
+  const ref = col('appleRegs').doc(regId(req.params.device, req.passMember.code));
+  const existed = (await ref.get()).exists;
+  await ref.set({ deviceId: req.params.device, serial: req.passMember.code, pushToken: String(req.body.pushToken), createdAt: Timestamp.now() });
+  res.sendStatus(existed ? 200 : 201);
+}));
+ap.delete('/devices/:device/registrations/:passType/:serial', applePassAuth, h(async (req, res) => {
+  await col('appleRegs').doc(regId(req.params.device, req.passMember.code)).delete();
+  res.sendStatus(200);
+}));
+ap.get('/devices/:device/registrations/:passType', h(async (req, res) => {
+  if (req.params.passType !== env.APPLE_PASS_TYPE_ID) return res.sendStatus(404);
+  const regs = await col('appleRegs').where('deviceId', '==', req.params.device).get();
+  const since = Number(req.query.passesUpdatedSince) || 0;
+  const members = regs.empty ? [] : await db.getAll(...regs.docs.map((d) => col('members').doc(d.data().serial)));
+  const changed = members.filter((d) => d.exists && (d.data().appleUpdatedAt?.toMillis() || 0) > since);
+  if (!changed.length) return res.sendStatus(204);
+  res.json({ serialNumbers: changed.map((d) => d.id), lastUpdated: String(Math.max(...changed.map((d) => d.data().appleUpdatedAt.toMillis()))) });
+}));
+ap.get('/passes/:passType/:serial', applePassAuth, h(async (req, res) => {
+  const updated = req.passMember.appleUpdatedAt?.toDate() || new Date();
+  res.set({ 'Content-Type': 'application/vnd.apple.pkpass', 'Last-Modified': updated.toUTCString(), 'Cache-Control': 'no-store' }).send(await wallet.buildApplePass(req.passMember));
+}));
+ap.post('/log', (req, res) => {
+  console.log('[apple wallet log]', JSON.stringify(req.body?.logs || []).slice(0, 2000));
+  res.sendStatus(200);
+});
 
 // ------------------------------------------------------------------ staff API
 const noStaff = async () => (await col('staff').limit(1).get()).empty;
@@ -413,10 +495,13 @@ async function staffMemberView(code) {
 
 s.get('/members/:code', memberByCode, h(async (req, res) => res.json(await staffMemberView(req.target.code))));
 
+// The staff camera read a QR: check it's a live card code (screenshots expire) and return the card.
+s.post('/scan', h(async (req, res) => res.json(await liveqr.verifyScan(req.body?.data))));
+
 s.post('/members/:code/stamp', memberByCode, h(async (req, res) => {
   const qty = Number(req.body?.qty || 1);
   if (!Number.isInteger(qty) || qty < 1 || qty > MAX_STAMPS) return bad(res, `You can add 1–${MAX_STAMPS} stamps at a time`);
-  const r = await L.addStamps(req.target.code, String(req.body?.program_id), qty, req.staff, { billRef: req.body?.bill_ref });
+  const r = await L.addStamps(req.target.code, String(req.body?.program_id), qty, req.staff, { billRef: req.body?.bill_ref, via: req.body?.via === 'live' ? 'live' : 'manual' });
   res.json({ ...r, view: await staffMemberView(req.target.code) });
 }));
 
@@ -629,7 +714,8 @@ s.get('/settings', admin, h(async (req, res) => {
     close_time: st.closeTime,
     bonus_min_checks: st.bonusMinChecks,
     bonus_min_new_regulars: st.bonusMinNewRegulars,
-    channels: { email: notify.emailEnabled(), whatsapp: notify.whatsappEnabled() },
+    channels: { email: notify.emailEnabled(), whatsapp: notify.whatsappEnabled(), push: true },
+    wallet: { apple: wallet.appleEnabled(), google: wallet.googleEnabled() },
     whatsapp_templates: { otp: env.WHATSAPP_OTP_TEMPLATE || null, birthday: env.WHATSAPP_BIRTHDAY_TEMPLATE || null },
     signup_url: baseUrl(req),
   });
@@ -669,14 +755,21 @@ const AUDIENCES = {
   birthday_month: (m) => m.birthMonth === L.today().m,
 };
 async function optedIn(channel) {
+  if (channel === 'push') {
+    // Members with at least one device that agreed to specials & events notifications.
+    const subs = await col('pushSubs').where('marketing', '==', true).select('memberCode').get();
+    const codes = [...new Set(subs.docs.map((d) => d.data().memberCode))];
+    const docs = codes.length ? await db.getAll(...codes.map((c) => col('members').doc(c))) : [];
+    return docs.filter((d) => d.exists).map((d) => ({ code: d.id, ...d.data() }));
+  }
   const snap = await col('members').where(channel === 'email' ? 'marketingEmail' : 'marketingWhatsapp', '==', true).get();
   return snap.docs.map((d) => ({ code: d.id, ...d.data() })).filter((m) => (channel === 'email' ? m.email : m.phone));
 }
 
 s.get('/campaigns', admin, h(async (_req, res) => {
-  const [email, whatsapp, history] = await Promise.all([optedIn('email'), optedIn('whatsapp'), col('campaigns').orderBy('createdAt', 'desc').limit(30).get()]);
+  const [email, whatsapp, pushList, history] = await Promise.all([optedIn('email'), optedIn('whatsapp'), optedIn('push'), col('campaigns').orderBy('createdAt', 'desc').limit(30).get()]);
   const counts = {};
-  for (const [ch, list] of [['email', email], ['whatsapp', whatsapp]]) for (const [a, fn] of Object.entries(AUDIENCES)) counts[`${ch}:${a}`] = list.filter(fn).length;
+  for (const [ch, list] of [['email', email], ['whatsapp', whatsapp], ['push', pushList]]) for (const [a, fn] of Object.entries(AUDIENCES)) counts[`${ch}:${a}`] = list.filter(fn).length;
   res.json({
     counts,
     history: history.docs.map((d) => {
@@ -689,7 +782,9 @@ s.get('/campaigns', admin, h(async (_req, res) => {
 // Saving the campaign queues it; the sendCampaign function (index.js) does the sending.
 s.post('/campaigns', admin, h(async (req, res) => {
   const { channel, audience, subject, body, template } = req.body || {};
-  if (!['email', 'whatsapp'].includes(channel)) return bad(res, 'Choose email or WhatsApp');
+  if (!['email', 'whatsapp', 'push'].includes(channel)) return bad(res, 'Choose email, WhatsApp or push');
+  if (channel === 'push' && (!subject || !body)) return bad(res, 'Title and message are required');
+  if (channel === 'push' && (subject.length > 60 || body.length > 200)) return bad(res, 'Keep push notifications short: title up to 60 and message up to 200 characters');
   if (!AUDIENCES[audience]) return bad(res, 'Unknown audience');
   if (channel === 'email' && (!subject || !body)) return bad(res, 'Subject and message are required');
   if (channel === 'whatsapp' && !template) return bad(res, 'Enter the approved WhatsApp template name');

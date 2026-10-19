@@ -9,7 +9,10 @@ It runs entirely on **Firebase**:
 
 **For customers (`/`)**
 - Join in under a minute: name, email, optional mobile and birthday, and separate opt-ins for email and WhatsApp marketing (POPIA).
-- A card with a QR code, a stamp card for each programme, and a celebration screen when they earn a reward.
+- A **live card QR** that changes every 30 seconds. It's generated on the phone, so it works offline. Staff scans check it with the server, so a screenshot of someone else's card stops working within about 2 minutes.
+- A stamp card for each programme, and a celebration screen when they earn a reward.
+- **Push notifications** (optional, per phone): "+1 stamp", "You earned a reward", birthday treats, and specials if they opt in. On iPhone, push works once the app is added to the Home Screen (iOS 16.4+).
+- **Apple Wallet and Google Wallet cards** (once set up, see below).
 - Rewards wallet with expiry dates, a "What's on" feed of specials and events, and their activity history.
 - Passwordless sign-in on a new phone, using a 6-digit code sent by email (or WhatsApp).
 - Profile, marketing preferences, and "delete my account and data".
@@ -26,7 +29,7 @@ It runs entirely on **Firebase**:
 - **Dashboard:** members, new and active members, stamps, rewards redeemed and unclaimed rewards, a daily chart, top regulars, and CSV export.
 - **Stamp cards:** create and edit them, set how long rewards stay valid, and switch cards on or off.
 - **What's on:** post specials and events with start and end dates.
-- **Messages:** send email campaigns, or WhatsApp campaigns using approved templates, to opted-in members only. You can target everyone, recent visitors, lapsed regulars or this month's birthdays.
+- **Messages:** send email campaigns, free **push notifications**, or WhatsApp campaigns using approved templates, to opted-in members only. You can target everyone, recent visitors, lapsed regulars or this month's birthdays.
 - **Birthday reward:** issued automatically for the member's whole birthday month.
 - **Team:** staff and manager accounts, plus a printable A4 sign-up poster with a QR code.
 - **Integrity:**
@@ -102,6 +105,34 @@ firebase emulators:start --only functions,firestore,hosting
 ```
 
 Then open http://127.0.0.1:5000 for the customer app and http://127.0.0.1:5000/staff for staff.
+
+## Wallet cards (optional)
+
+Both wallet cards stay hidden in the app until their settings are added to `functions/.env` (or the `FUNCTIONS_ENV` GitHub secret).
+
+**Google Wallet.** The card shows the same rotating QR as the app, so staff scan it as normal.
+
+1. Create an issuer account at https://pay.google.com/business/console, under **Google Wallet API**. Note the **Issuer ID**.
+2. In Google Cloud (project `forries-2815d`), enable the **Google Wallet API**. Create a service account (for example `wallet`) and download a **JSON key**.
+3. In the Wallet console, go to **Users** and add the service account's email as a **Developer**.
+4. Set `GOOGLE_WALLET_ISSUER_ID=…` and `GOOGLE_WALLET_SA_KEY=<the JSON key, base64-encoded>` (`base64 -w0 key.json`).
+5. While Google reviews your account, only the test users you add in the console can save cards. Then request **publishing access**.
+
+**Apple Wallet.** Apple Wallet barcodes can't change, so this card has no barcode. It shows the member's stamps and rewards, updates itself (with a lock-screen message) when they're stamped, pops up near the pub, and links to the live card for scanning.
+
+1. Join the Apple Developer Program ($99/year).
+2. Go to Certificates, Identifiers & Profiles. Under **Identifiers**, add a **Pass Type ID** such as `pass.za.co.forries.rewards`.
+3. Create a **Pass Type ID certificate** for it, open it in Keychain Access and export it as a `.p12` with a password.
+4. Download Apple's **WWDR G4** intermediate certificate (PEM).
+5. Set these values:
+   - `APPLE_PASS_TYPE_ID`
+   - `APPLE_TEAM_ID`
+   - `APPLE_PASS_P12=<base64 of the .p12>`
+   - `APPLE_PASS_P12_PASSWORD`
+   - `APPLE_WWDR_PEM=<base64 of the PEM>`
+   - optional: `VENUE_LAT` and `VENUE_LNG`, so the card pops up near the pub
+
+Note: `npm audit` reports `node-forge` (used to sign Apple passes). The advisory is about *verifying* RSA signatures, which this app never does; it only signs.
 
 ## WhatsApp (optional)
 
