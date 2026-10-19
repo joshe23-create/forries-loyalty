@@ -44,6 +44,7 @@ const birthdayValue = (f) => (f.bmonth.value && f.bday.value ? `${f.bmonth.value
 // ------------------------------------------------------------------ welcome / join / sign in
 function showWelcome() {
   stopPolling();
+  root.className = 'shell auth';
   root.innerHTML = `
     <div class="hero">${wordmark()}<p>${esc(brand.tagline)}</p></div>
     <div class="pad stack">
@@ -61,6 +62,7 @@ function showWelcome() {
 }
 
 function showJoin() {
+  root.className = 'shell auth';
   root.innerHTML = `
     <div class="hero" style="padding:28px 24px">${wordmark()}</div>
     <form class="pad" id="joinForm" novalidate>
@@ -108,6 +110,7 @@ function showJoin() {
 }
 
 function showSignIn(prefill = '') {
+  root.className = 'shell auth';
   root.innerHTML = `
     <div class="hero" style="padding:28px 24px">${wordmark()}</div>
     <form class="pad" id="f1">
@@ -136,6 +139,7 @@ function showSignIn(prefill = '') {
 
 function showCodeEntry(identifier, r) {
   const where = r.sentVia ? `We sent a 6-digit code to ${esc(r.where)}.` : 'Demo mode: no email or WhatsApp is set up, so here is your code.';
+  root.className = 'shell auth';
   root.innerHTML = `
     <div class="hero" style="padding:28px 24px">${wordmark()}</div>
     <form class="pad" id="f2">
@@ -183,15 +187,20 @@ async function loadMe(first) {
 
 function renderApp() {
   if (!$('#app-main')) {
+    root.className = 'shell app';
+    // The tab bar sits at the bottom of the screen on phones and moves into the top bar on laptops.
     root.innerHTML = `
-      <header class="topbar"><div class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /></div><div class="hi" id="hi"></div></header>
-      <main class="view" id="app-main"></main>
-      <nav class="tabbar"><div class="inner">
-        <button data-tab="card"><span class="i">🎟️</span>Card</button>
-        <button data-tab="rewards"><span class="i">🎁</span>Rewards</button>
-        <button data-tab="specials"><span class="i">📣</span>What's on</button>
-        <button data-tab="profile"><span class="i">👤</span>Profile</button>
-      </div></nav>`;
+      <header class="topbar"><div class="topbar-inner">
+        <div class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /></div>
+        <nav class="tabbar"><div class="inner">
+          <button data-tab="card"><span class="i">🎟️</span>Card</button>
+          <button data-tab="rewards"><span class="i">🎁</span>Rewards</button>
+          <button data-tab="specials"><span class="i">📣</span>What's on</button>
+          <button data-tab="profile"><span class="i">👤</span>Profile</button>
+        </div></nav>
+        <div class="hi" id="hi"></div>
+      </div></header>
+      <main class="view" id="app-main"></main>`;
     document.querySelector('.tabbar').onclick = (e) => {
       const b = e.target.closest('[data-tab]');
       if (b) ((tab = b.dataset.tab), renderApp(), window.scrollTo(0, 0));
@@ -219,6 +228,7 @@ function renderCard() {
   const main = $('#app-main');
   const m = data.member;
   main.innerHTML = `
+    <div class="card-layout"><div class="col-a">
     <div class="member-card">
       <div class="name">${esc(m.name)}</div>
       <div class="qr" id="liveqr" role="img" aria-label="Your live membership QR code"></div>
@@ -227,8 +237,9 @@ function renderCard() {
     </div>
     <div id="pushTip"></div>
     <div id="walletBtns"></div>
-    ${data.vouchers.length ? `<div class="card voucher" style="margin-top:16px;cursor:pointer" id="toRewards"><div class="ico">🎁</div><div><div class="t">You have ${data.vouchers.length} reward${data.vouchers.length > 1 ? 's' : ''} ready!</div><div class="small muted">Tap to see them</div></div></div>` : ''}
     <div id="installTip"></div>
+    </div><div class="col-b">
+    ${data.vouchers.length ? `<div class="card voucher" style="margin-top:16px;cursor:pointer" id="toRewards"><div class="ico">🎁</div><div><div class="t">You have ${data.vouchers.length} reward${data.vouchers.length > 1 ? 's' : ''} ready!</div><div class="small muted">Tap to see them</div></div></div>` : ''}
     <div class="section-title">Your stamp cards</div>
     <div class="stack">${data.cards
       .map((c) => {
@@ -241,7 +252,8 @@ function renderCard() {
           <div class="small">${left === 1 ? '<strong>Just 1 more</strong>' : `<strong>${left} more</strong>`} to earn: ${esc(c.reward)}</div>
         </div>`;
       })
-      .join('') || '<p class="muted">No stamp cards running right now.</p>'}</div>`;
+      .join('') || '<p class="muted">No stamp cards running right now.</p>'}</div>
+    </div></div>`;
   lastStamps = Object.fromEntries(data.cards.map((c) => [c.program_id, c.stamps]));
   $('#toRewards')?.addEventListener('click', () => ((tab = 'rewards'), renderApp()));
   renderInstallTip();
@@ -363,7 +375,7 @@ function renderRewards() {
     <h2 style="margin-top:4px">Your rewards</h2>
     ${data.vouchers.length
       ? `<p class="muted">To claim, show your live card to the team and tell them which reward you'd like.</p>
-         <div class="stack">${data.vouchers
+         <div class="stack grid-2">${data.vouchers
            .map(
              (v) => `<div class="card voucher"><div class="ico">${v.source === 'birthday' ? '🎂' : '🎁'}</div><div>
               <div class="t">${esc(v.title)}</div>
@@ -379,7 +391,7 @@ function renderSpecials() {
   const list = data.specials;
   $('#app-main').innerHTML = `
     <h2 style="margin-top:4px">What's on</h2>
-    <div class="stack">${list.length
+    <div class="stack grid-2">${list.length
       ? list
           .map(
             (s) => `<article class="card special">
@@ -399,6 +411,7 @@ async function renderProfile() {
   const main = $('#app-main');
   main.innerHTML = `
     <h2 style="margin-top:4px">Profile</h2>
+    <div class="profile-layout"><div>
     <form class="card" id="pf">
       <label>Name<input name="name" value="${esc(m.name)}" required /></label>
       <label>Email<input value="${esc(m.email || '')}" disabled /></label>
@@ -413,7 +426,8 @@ async function renderProfile() {
       <p class="error" id="err"></p>
       <button class="btn primary block" type="submit">Save</button>
     </form>
-    <div class="section-title">Notifications on this phone</div>
+    </div><div>
+    <div class="section-title section-first">Notifications on this device</div>
     <div class="card" id="notif"><p class="muted" style="margin:0">Checking…</p></div>
     <div class="section-title">Recent activity</div>
     <div class="card"><ul class="history" id="hist"><li class="muted">Loading…</li></ul></div>
@@ -421,7 +435,8 @@ async function renderProfile() {
     <div class="stack">
       <button class="btn block" id="logout">Sign out</button>
       <button class="btn block danger" id="del">Delete my account and data</button>
-    </div>`;
+    </div>
+    </div></div>`;
   const f = $('#pf');
   f.onsubmit = async (e) => {
     e.preventDefault();
