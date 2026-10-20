@@ -62,7 +62,7 @@ function dialog(title, html, onSubmit, submitLabel = 'Save') {
 async function showLogin(setup) {
   stopCamera();
   root.innerHTML = `
-    <div class="hero" style="padding:32px 24px"><h1 class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /><small>Staff</small></h1></div>
+    <div class="hero compact"><h1 class="wordmark"><img class="logo" src="/icons/logo-white.svg" alt="${esc(brand.name)}" /><small>Staff</small></h1></div>
     <form class="pad" id="lf" style="max-width:420px;margin:0 auto">
       <h2>${setup ? 'Create the manager account' : 'Staff sign in'}</h2>
       ${setup ? '<label>Your name<input name="name" required autocomplete="name" /></label>' : ''}

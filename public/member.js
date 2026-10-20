@@ -64,7 +64,7 @@ function showWelcome() {
 function showJoin() {
   root.className = 'shell auth';
   root.innerHTML = `
-    <div class="hero" style="padding:28px 24px">${wordmark()}</div>
+    <div class="hero compact">${wordmark()}</div>
     <form class="pad" id="joinForm" novalidate>
       <h2 style="margin-top:0">Join ${esc(brand.name)} Rewards</h2>
       <label>Your name<input name="name" autocomplete="name" required /></label>
@@ -112,7 +112,7 @@ function showJoin() {
 function showSignIn(prefill = '') {
   root.className = 'shell auth';
   root.innerHTML = `
-    <div class="hero" style="padding:28px 24px">${wordmark()}</div>
+    <div class="hero compact">${wordmark()}</div>
     <form class="pad" id="f1">
       <h2 style="margin-top:0">Sign in</h2>
       <label>Email or mobile number<input name="identifier" autocomplete="username" required value="${esc(prefill)}" /></label>
@@ -141,7 +141,7 @@ function showCodeEntry(identifier, r) {
   const where = r.sentVia ? `We sent a 6-digit code to ${esc(r.where)}.` : 'Demo mode: no email or WhatsApp is set up, so here is your code.';
   root.className = 'shell auth';
   root.innerHTML = `
-    <div class="hero" style="padding:28px 24px">${wordmark()}</div>
+    <div class="hero compact">${wordmark()}</div>
     <form class="pad" id="f2">
       <h2 style="margin-top:0">Enter your code</h2>
       <p>${where}</p>

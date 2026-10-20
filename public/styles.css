@@ -1,4 +1,7 @@
 :root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
   --brand: #1f4d3a;        /* forest green */
   --brand-ink: #fff;
   --brand-dark: #163a2b;
@@ -45,12 +48,14 @@ label > input, label > select, label > textarea { margin-top: 5px; font-weight: 
 
 /* ------------------------------------------------------------------ member app */
 .shell { max-width: 480px; margin: 0 auto; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
-.hero { background: var(--brand); color: var(--brand-ink); padding: 48px 24px 40px; text-align: center; }
+/* env(safe-area-inset-*) keeps content clear of the iPhone status bar / notch when opened from the Home Screen. */
+.hero { background: var(--brand); color: var(--brand-ink); padding: calc(48px + var(--safe-top)) calc(24px + var(--safe-right)) 40px calc(24px + var(--safe-left)); text-align: center; }
+.hero.compact { padding-top: calc(28px + var(--safe-top)); padding-bottom: 28px; }
 .wordmark { font-family: Georgia, "Times New Roman", serif; font-weight: 700; letter-spacing: .02em; font-size: 40px; margin: 0; }
 .wordmark small { display: block; font-family: system-ui, sans-serif; font-size: 13px; letter-spacing: .25em; text-transform: uppercase; color: var(--accent); font-weight: 700; margin-top: 4px; }
 .hero p { opacity: .9; margin: 14px 0 0; }
 .pad { padding: 20px 16px; }
-.topbar { background: var(--brand); color: var(--brand-ink); padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 2; }
+.topbar { background: var(--brand); color: var(--brand-ink); padding: calc(14px + var(--safe-top)) calc(16px + var(--safe-right)) 14px calc(16px + var(--safe-left)); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 2; }
 .topbar .wordmark { font-size: 22px; }
 /* Logo artwork (Foresters Arms blackletter) */
 .wordmark .logo { display: block; width: min(320px, 82%); height: auto; margin: 0 auto; }
@@ -126,7 +131,7 @@ dialog h2 { margin-top: 0; }
 
   /* Welcome, join and sign-in: split screen (logo panel left, form right) */
   .shell.auth { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); min-height: 100vh; }
-  .shell.auth > .hero { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; padding: 48px !important; position: sticky; top: 0; }
+  .shell.auth > .hero { display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; padding: 48px; position: sticky; top: 0; }
   .shell.auth > .hero .wordmark { width: 100%; }
   .shell.auth > .hero .wordmark .logo { width: min(460px, 75%); }
   .shell.auth > .hero p { font-size: 18px; }
