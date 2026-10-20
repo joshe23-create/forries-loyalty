@@ -56,6 +56,7 @@ function showWelcome() {
       </div>
       <button class="btn primary block" id="joinBtn">Join now — it's free</button>
       <button class="btn block" id="signinBtn">I'm already a member</button>
+      <p class="small muted" style="text-align:center">Members must be 18+. <a href="/terms" target="_blank" rel="noopener">Terms</a> · <a href="/terms#privacy" target="_blank" rel="noopener">Privacy</a></p>
     </div>`;
   $('#joinBtn').onclick = showJoin;
   $('#signinBtn').onclick = () => showSignIn();
@@ -67,24 +68,24 @@ function showJoin() {
     <div class="hero compact">${wordmark()}</div>
     <form class="pad" id="joinForm" novalidate>
       <h2 style="margin-top:0">Join ${esc(brand.name)} Rewards</h2>
-      <label>Your name<input name="name" autocomplete="name" required /></label>
+      <div class="row">
+        <label>First name<input name="first_name" autocomplete="given-name" required /></label>
+        <label>Surname<input name="last_name" autocomplete="family-name" required /></label>
+      </div>
+      <label>Mobile / WhatsApp number<input name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="082 123 4567" required /></label>
       <label>Email<input name="email" type="email" autocomplete="email" inputmode="email" required /></label>
-      <label>Mobile number <span class="muted" style="font-weight:400">(optional)</span><input name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="082 123 4567" /></label>
       <label>Birthday <span class="muted" style="font-weight:400">(optional — for your birthday treat)</span>${birthdayFields()}</label>
       <div class="card stack" style="padding:14px">
-        <label class="check" style="margin:0"><input type="checkbox" name="marketing_email" /> <span>Email me specials and events</span></label>
-        <label class="check" style="margin:0" id="waOpt"><input type="checkbox" name="marketing_whatsapp" /> <span>WhatsApp me specials and events</span></label>
+        <label class="check" style="margin-bottom:0"><input type="checkbox" name="marketing_email" /> <span>Email me specials and events</span></label>
+        <label class="check" style="margin-bottom:0" id="waOpt"><input type="checkbox" name="marketing_whatsapp" /> <span>WhatsApp me specials and events</span></label>
         <div class="small muted">You can change this any time in your profile.</div>
       </div>
-      <label class="check"><input type="checkbox" name="accept_terms" required /> <span>I agree to the rewards terms${brand.privacyUrl ? ` and <a href="${esc(brand.privacyUrl)}" target="_blank" rel="noopener">privacy policy</a>` : ''}. My details are only used for this programme.</span></label>
+      <label class="check"><input type="checkbox" name="accept_terms" required /> <span>I'm <strong>18 or older</strong> and agree to the <a href="/terms" target="_blank" rel="noopener">Terms &amp; Conditions</a> and <a href="/terms#privacy" target="_blank" rel="noopener">Privacy Notice</a>.</span></label>
       <p class="error" id="err"></p>
       <button class="btn primary block" type="submit">Create my card</button>
       <p style="text-align:center"><button type="button" class="link" id="back">Back</button></p>
     </form>`;
   const f = $('#joinForm');
-  const syncWa = () => $('#waOpt').classList.toggle('hidden', !f.phone.value.trim());
-  f.phone.addEventListener('input', syncWa);
-  syncWa();
   $('#back').onclick = showWelcome;
   f.onsubmit = async (e) => {
     e.preventDefault();
@@ -93,7 +94,7 @@ function showJoin() {
     try {
       await api('/api/m/signup', {
         body: {
-          name: f.name.value, email: f.email.value, phone: f.phone.value, birthday: birthdayValue(f),
+          first_name: f.first_name.value, last_name: f.last_name.value, email: f.email.value, phone: f.phone.value, birthday: birthdayValue(f),
           marketing_email: f.marketing_email.checked, marketing_whatsapp: f.marketing_whatsapp.checked, accept_terms: f.accept_terms.checked,
         },
       });
@@ -370,11 +371,19 @@ function renderWalletButtons() {
   });
 }
 
+function blackoutNotice() {
+  const b = data.rewards_blackout || { upcoming: [] };
+  const day = (d) => new Date(d + 'T12:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${b.today ? `<div class="install-tip" style="margin-bottom:14px">🏉 <span><strong>No rewards today</strong> — ${esc(b.today)}. Your stamps still count, and any reward expiring today stays valid until your next visit.</span></div>` : ''}
+    ${b.upcoming.length ? `<p class="small muted">No-reward days coming up: ${b.upcoming.map((x) => `${day(x.date)} (${esc(x.label)})`).join(', ')}.</p>` : ''}`;
+}
+
 function renderRewards() {
   $('#app-main').innerHTML = `
     <h2 style="margin-top:4px">Your rewards</h2>
+    ${blackoutNotice()}
     ${data.vouchers.length
-      ? `<p class="muted">To claim, show your live card to the team and tell them which reward you'd like.</p>
+      ? `<p class="muted">To claim, show your live card to the team and tell them which reward you'd like. One reward per visit.</p>
          <div class="stack grid-2">${data.vouchers
            .map(
              (v) => `<div class="card voucher"><div class="ico">${v.source === 'birthday' ? '🎂' : '🎁'}</div><div>
@@ -413,9 +422,12 @@ async function renderProfile() {
     <h2 style="margin-top:4px">Profile</h2>
     <div class="profile-layout"><div>
     <form class="card" id="pf">
-      <label>Name<input name="name" value="${esc(m.name)}" required /></label>
+      <div class="row">
+        <label>First name<input name="first_name" value="${esc(m.first_name)}" required /></label>
+        <label>Surname<input name="last_name" value="${esc(m.last_name)}" required /></label>
+      </div>
       <label>Email<input value="${esc(m.email || '')}" disabled /></label>
-      <label>Mobile number<input name="phone" type="tel" value="${m.phone ? '+' + esc(m.phone) : ''}" placeholder="082 123 4567" /></label>
+      <label>Mobile / WhatsApp number<input name="phone" type="tel" required value="${m.phone ? '+' + esc(m.phone) : ''}" placeholder="082 123 4567" /></label>
       ${m.birthday
         ? `<label>Birthday<input value="${esc(new Date(2000, Number(m.birthday.slice(0, 2)) - 1, Number(m.birthday.slice(3))).toLocaleDateString('en-ZA', { day: 'numeric', month: 'long' }))}" disabled /></label>`
         : `<label>Birthday <span class="muted" style="font-weight:400">(can only be set once)</span>${birthdayFields()}</label>`}
@@ -432,6 +444,7 @@ async function renderProfile() {
     <div class="section-title">Recent activity</div>
     <div class="card"><ul class="history" id="hist"><li class="muted">Loading…</li></ul></div>
     <div class="section-title">Account</div>
+    <p class="small" style="margin:0 0 12px"><a href="/terms" target="_blank" rel="noopener">Terms &amp; Conditions</a> · <a href="/terms#privacy" target="_blank" rel="noopener">Privacy Notice</a> · Questions? <a href="mailto:admin@forries.co.za">admin@forries.co.za</a></p>
     <div class="stack">
       <button class="btn block" id="logout">Sign out</button>
       <button class="btn block danger" id="del">Delete my account and data</button>
@@ -440,7 +453,7 @@ async function renderProfile() {
   const f = $('#pf');
   f.onsubmit = async (e) => {
     e.preventDefault();
-    const body = { name: f.name.value, phone: f.phone.value, marketing_email: f.marketing_email.checked, marketing_whatsapp: f.marketing_whatsapp.checked };
+    const body = { first_name: f.first_name.value, last_name: f.last_name.value, phone: f.phone.value, marketing_email: f.marketing_email.checked, marketing_whatsapp: f.marketing_whatsapp.checked };
     if (!m.birthday && f.bmonth) {
       const b = birthdayValue(f);
       if (b && !confirm(`Set your birthday to ${f.bday.value} ${MONTHS[f.bmonth.value - 1]}? This can't be changed later.`)) return;

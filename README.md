@@ -8,7 +8,7 @@ It runs entirely on **Firebase**:
 - **Firestore:** stores all the data.
 
 **For customers (`/`)**
-- Join in under a minute: name, email, optional mobile and birthday, and separate opt-ins for email and WhatsApp marketing (POPIA).
+- Join in under a minute: first name, surname, mobile/WhatsApp number and email are required; birthday is optional. Separate opt-ins for email and WhatsApp marketing (POPIA), plus an 18+ and terms confirmation that's recorded with the terms version.
 - A **live card QR** that changes every 30 seconds. It's generated on the phone, so it works offline. Staff scans check it with the server, so a screenshot of someone else's card stops working within about 2 minutes.
 - A stamp card for each programme, and a celebration screen when they earn a reward.
 - **Push notifications** (optional, per phone): "+1 stamp", "You earned a reward", birthday treats, and specials if they opt in. On iPhone, push works once the app is added to the Home Screen (iOS 16.4+).
@@ -39,6 +39,8 @@ It runs entirely on **Firebase**:
   - **Bills export:** CSV of every stamped bill.
 - **Staff bonus:** a staff member is marked bonus-eligible each month when they meet your spot-check and new-regular targets with no failed checks. A "new regular" is a customer they gave a first stamp to who came back on another day.
 - **Stamp rules:** set the bill requirement, visit hours, limits, trading hours and bonus targets in Team & settings.
+- **Reward rules:** one reward per visit, and **no-reward days** (e.g. big rugby days) that you set in Team & settings. Members see them in the app; stamps still count; rewards expiring on those days stay valid until the next day.
+- **Terms & Privacy:** `/terms` (Terms & Conditions + POPIA Privacy Notice). Till-slip records are deleted after 12 months by the daily job.
 
 ## One-time Firebase setup (in the console)
 

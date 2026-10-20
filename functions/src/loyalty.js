@@ -60,6 +60,8 @@ async function getSettings() {
     // Staff bonus targets (per month)
     bonusMinChecks: num(s.bonusMinChecks, 4),
     bonusMinNewRegulars: num(s.bonusMinNewRegulars, 5),
+    // "No-reward days" (e.g. big rugby match days): [{ date: 'YYYY-MM-DD', label }]
+    blackoutDays: Array.isArray(s.blackoutDays) ? s.blackoutDays : [],
   };
 }
 const saveSettings = (fields) => col('settings').doc('main').set(fields, { merge: true });
@@ -75,12 +77,26 @@ async function listPrograms() {
 // ------------------------------------------------------------------ member view
 const voucherOut = (v) => ({ id: v.id, title: v.title, source: v.source, created_at: iso(v.createdAt), expires_at: v.expiresAt || null });
 
-async function openVouchers(code) {
-  const t = today().iso;
+/** Label of today's no-reward day, or null. */
+const blackoutLabel = (settings, day = today().iso) => settings.blackoutDays.find((b) => b.date === day)?.label ?? null;
+
+/**
+ * Is a reward still usable today? A reward whose expiry fell on no-reward days stays valid
+ * until the next day it can be used (promised in the terms).
+ */
+function stillValid(expiresAt, settings, day = today().iso) {
+  if (!expiresAt || expiresAt >= day) return true;
+  const blocked = new Set(settings.blackoutDays.map((b) => b.date));
+  for (let d = expiresAt; d < day; d = addDays(d, 1)) if (!blocked.has(d)) return false;
+  return true;
+}
+
+async function openVouchers(code, settings) {
+  settings ??= await getSettings();
   const snap = await col('vouchers').where('memberCode', '==', code).where('redeemedAt', '==', null).get();
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((v) => !v.expiresAt || v.expiresAt >= t)
+    .filter((v) => stillValid(v.expiresAt, settings))
     .sort((a, b) => (a.expiresAt || '9999').localeCompare(b.expiresAt || '9999'))
     .map(voucherOut);
 }
@@ -91,6 +107,16 @@ async function memberSummary(member, programs) {
     .filter((p) => p.active)
     .map((p) => ({ program_id: p.id, name: p.name, emoji: p.emoji, stamps_required: p.stampsRequired, reward: p.reward, stamps: member.cards?.[p.id] || 0 }));
   return { cards, vouchers: await openVouchers(member.code) };
+}
+
+/** Today's and upcoming no-reward days, for the apps. */
+async function rewardBlackouts(settings) {
+  settings ??= await getSettings();
+  const day = today().iso, until = addDays(day, 60);
+  return {
+    today: blackoutLabel(settings, day),
+    upcoming: settings.blackoutDays.filter((b) => b.date > day && b.date <= until).sort((a, b) => a.date.localeCompare(b.date)),
+  };
 }
 
 // ------------------------------------------------------------------ stamping
@@ -222,13 +248,23 @@ async function undoStamp(txId) {
 }
 
 async function redeemVoucher(voucherId, code, staff) {
+  const settings = await getSettings();
+  const isManager = staff.role === 'admin';
   const vRef = col('vouchers').doc(String(voucherId));
+  // One reward per visit: look back over the visit window (or today, if the visit rule is off).
+  const visitMs = settings.visitHours * 3600e3;
+  const since = visitMs > 0 ? Date.now() - visitMs : startOfLocalDay().toMillis();
+  const recentQuery = col('transactions').where('memberCode', '==', code).where('createdAt', '>=', Timestamp.fromMillis(since));
   return db.runTransaction(async (t) => {
-    const snap = await t.get(vRef);
+    const [snap, recentSnap] = await Promise.all([t.get(vRef), t.get(recentQuery)]);
     const v = snap.data();
     if (!v || v.memberCode !== code) throw new UserError('Reward not found');
     if (v.redeemedAt) throw new UserError('This reward was already used');
-    if (v.expiresAt && v.expiresAt < today().iso) throw new UserError('This reward has expired');
+    if (!stillValid(v.expiresAt, settings)) throw new UserError('This reward has expired');
+    const blackout = blackoutLabel(settings);
+    if (blackout && !isManager) throw new UserError(`No rewards today (${blackout}) — stamps still count. Ask a manager if needed.`);
+    const already = recentSnap.docs.map((d) => d.data()).find((x) => x.type === 'redeem' && !x.undone);
+    if (already && !isManager) throw new UserError(`One reward per visit — "${already.voucherTitle}" was already redeemed at ${localClockOf(already.createdAt.toDate())}`);
     t.update(vRef, { redeemedAt: Timestamp.now(), redeemedBy: staff.id });
     t.set(col('transactions').doc(), {
       memberCode: code, staffId: staff.id, staffName: staff.name, type: 'redeem', voucherId: vRef.id, voucherTitle: v.title,
@@ -267,7 +303,18 @@ async function issueBirthdayVoucher(member, settings) {
   }
 }
 
+/** Privacy notice promise: till-slip records are kept for up to 12 months. */
+async function purgeOldBills() {
+  const old = await col('bills').where('createdAt', '<', Timestamp.fromMillis(Date.now() - 365 * 86400e3)).select().limit(400).get();
+  if (old.empty) return 0;
+  const batch = db.batch();
+  old.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+  return old.size;
+}
+
 async function runBirthdays(baseUrl) {
+  await purgeOldBills().catch((e) => console.error('[retention]', e.message));
   const { m } = today();
   const settings = await getSettings();
   const snap = await col('members').where('birthMonth', '==', m).get();
@@ -301,6 +348,6 @@ async function runBirthdays(baseUrl) {
 const localClockOf = (date) => localClock(date).hhmm;
 
 module.exports = {
-  UserError, UNDO_MINUTES, today, localDay, localClockOf, normalizeBill, outsideHours, addDays, getSettings, saveSettings, listPrograms, memberSummary, openVouchers,
+  UserError, UNDO_MINUTES, today, blackoutLabel, stillValid, rewardBlackouts, purgeOldBills, localDay, localClockOf, normalizeBill, outsideHours, addDays, getSettings, saveSettings, listPrograms, memberSummary, openVouchers,
   addStamps, undoStamp, redeemVoucher, giftVoucher, issueBirthdayVoucher, runBirthdays,
 };

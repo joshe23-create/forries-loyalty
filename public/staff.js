@@ -275,13 +275,14 @@ function renderMember() {
       <div class="small" style="text-align:right">${esc(m.email || '')}<br>${esc(phoneFmt(m.phone))}${bday ? `<br>🎂 ${esc(bday)}` : ''}</div>
     </div>
     <div class="section-title">Rewards ready (${v.vouchers.length})</div>
+    ${v.rewards_blackout?.today ? `<div class="card" style="border-color:var(--accent);background:#fffaf0;margin-bottom:10px">🏉 <strong>No-reward day: ${esc(v.rewards_blackout.today)}.</strong> Rewards can't be redeemed today — stamps still count.${admin ? ' As a manager you can still redeem if needed.' : ''}</div>` : ''}
     <div class="stack">${
       v.vouchers.length
         ? v.vouchers
             .map(
               (x) => `<div class="card voucher"><div class="ico">${x.source === 'birthday' ? '🎂' : '🎁'}</div>
               <div style="flex:1"><div class="t">${esc(x.title)}</div><div class="small muted">${x.expires_at ? 'Valid until ' + fmtDate(x.expires_at) : 'No expiry'}</div></div>
-              <button class="btn accent" data-redeem="${x.id}">Redeem</button></div>`
+              <button class="btn accent" data-redeem="${x.id}" ${v.rewards_blackout?.today && !admin ? 'disabled' : ''}>Redeem</button></div>`
             )
             .join('')
         : '<div class="card muted">No rewards to claim.</div>'
@@ -662,6 +663,16 @@ async function renderSettings() {
         .join('')}</tbody></table>
       <p class="small muted">Staff can scan, stamp and redeem. Managers can also see the dashboard, edit cards and posts, send messages and manage the team.</p>
     </div>
+    <div class="card" id="bdays" style="margin-top:16px">
+      <strong>No-reward days</strong>
+      <p class="small muted" style="margin:4px 0 10px">E.g. big rugby match days. Staff can't redeem rewards on these dates (managers can override); stamps still count. Members see upcoming dates in the app, and rewards that expire on these days stay valid until the next day.</p>
+      <ul class="act" id="bdayList">${(st.blackout_days || []).map((d, i) => `<li><span><strong>${esc(new Date(d.date + 'T12:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))}</strong> — ${esc(d.label)}</span><button class="btn sm danger" data-bday="${i}">Remove</button></li>`).join('') || '<li class="muted">None set</li>'}</ul>
+      <div class="row" style="margin-top:10px;align-items:flex-end">
+        <label style="margin:0">Date<input type="date" id="bdDate" /></label>
+        <label style="margin:0;flex:2">What's on<input id="bdLabel" placeholder="e.g. Springboks vs All Blacks" maxlength="60" /></label>
+        <button class="btn primary" id="bdAdd" style="flex:none">Add</button>
+      </div>
+    </div>
     <form class="card" id="rf" style="margin-top:16px">
       <strong>Stamp rules</strong>
       <p class="small muted" style="margin:4px 0 0">Stops stamps being given away. Managers can always override these limits.</p>
@@ -743,6 +754,23 @@ async function renderSettings() {
     }
   };
   $('#poster').onclick = () => window.open('/api/s/poster', '_blank');
+  const saveBdays = async (list) => {
+    try {
+      await api('/api/s/settings', { method: 'PATCH', body: { blackout_days: list } });
+      renderSettings();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  };
+  $('#bdAdd').onclick = () => {
+    const date = $('#bdDate').value;
+    if (!date) return toast('Pick a date', true);
+    saveBdays([...(st.blackout_days || []), { date, label: $('#bdLabel').value.trim() || 'Big match day' }]);
+  };
+  $('#bdayList').onclick = (e) => {
+    const i = e.target.dataset.bday;
+    if (i !== undefined) saveBdays(st.blackout_days.filter((_, j) => j !== Number(i)));
+  };
 }
 
 // ------------------------------------------------------------------ integrity

@@ -15,6 +15,7 @@ const env = process.env;
 const BRAND = env.BRAND_NAME || 'Forries';
 const DEMO = env.DEMO_MODE === 'true';
 const MAX_STAMPS = Number(env.MAX_STAMPS_PER_SCAN || 10);
+const TERMS_VERSION = '2026-10-20'; // bump when public/terms.html changes materially
 // Venue logo (dark version) for the printable poster.
 const LOGO_INK = require('fs').readFileSync(require('path').join(__dirname, 'assets', 'logo-ink.svg'), 'utf8');
 
@@ -106,6 +107,7 @@ const specialOut = (s) => ({ id: s.id, title: s.title, body: s.body || '', image
 
 const publicMember = (m) => ({
   code: m.code, name: m.name, email: m.email || null, phone: m.phone || null,
+  first_name: m.firstName ?? String(m.name || '').split(' ')[0], last_name: m.lastName ?? String(m.name || '').split(' ').slice(1).join(' '),
   birthday: m.birthMonth ? `${String(m.birthMonth).padStart(2, '0')}-${String(m.birthDay).padStart(2, '0')}` : null,
   marketing_email: !!m.marketingEmail, marketing_whatsapp: !!m.marketingWhatsapp, created_at: iso(m.createdAt),
 });
@@ -140,7 +142,8 @@ app.get('/api/brand', (_req, res) =>
     tagline: env.BRAND_TAGLINE || 'Collect stamps, earn rewards.',
     demo: DEMO,
     loginVia: { email: notify.emailEnabled(), whatsapp: notify.whatsappEnabled() && !!env.WHATSAPP_OTP_TEMPLATE },
-    privacyUrl: env.PRIVACY_URL || null,
+    termsUrl: '/terms',
+    privacyUrl: env.PRIVACY_URL || '/terms#privacy',
   })
 );
 app.get('/api/specials', h(async (_req, res) => res.json(await activeSpecials())));
@@ -184,13 +187,21 @@ app.post('/unsubscribe', h(async (req, res) => {
 // ------------------------------------------------------------------ member API
 app.post('/api/m/signup', h(async (req, res) => {
   const b = req.body || {};
-  const name = String(b.name || '').trim().slice(0, 80);
+  // First name, surname, mobile and email are all required. (A single "name" with two or more words is also accepted.)
+  let firstName = String(b.first_name ?? '').trim().slice(0, 40);
+  let lastName = String(b.last_name ?? '').trim().slice(0, 40);
+  if (!firstName && !lastName && b.name) {
+    const parts = String(b.name).trim().split(/\s+/);
+    if (parts.length >= 2) (firstName = parts.shift().slice(0, 40)), (lastName = parts.join(' ').slice(0, 40));
+  }
+  const name = `${firstName} ${lastName}`.trim();
   const email = normalizeEmail(b.email);
   const phone = normalizePhone(b.phone);
   const birthday = parseBirthday(b.birthday);
-  if (!name) return bad(res, 'Please enter your name');
+  if (!firstName) return bad(res, 'Please enter your first name');
+  if (!lastName) return bad(res, 'Please enter your surname');
+  if (!phone) return bad(res, phone === undefined ? "That mobile number doesn't look right" : 'Please enter your mobile / WhatsApp number');
   if (!email || !validEmail(email)) return bad(res, 'Please enter a valid email address');
-  if (phone === undefined) return bad(res, "That phone number doesn't look right");
   if (birthday === undefined) return bad(res, "That birthday doesn't look right");
   if (!b.accept_terms) return bad(res, 'Please accept the terms to join');
 
@@ -208,8 +219,10 @@ app.post('/api/m/signup', h(async (req, res) => {
         if (!(await t.get(ref)).exists) break;
       }
       t.set(ref, {
-        name, nameLower: name.toLowerCase(), email, phone, birthMonth: birthday?.month ?? null, birthDay: birthday?.day ?? null,
+        name, firstName, lastName, nameLower: name.toLowerCase(), email, phone, birthMonth: birthday?.month ?? null, birthDay: birthday?.day ?? null,
         marketingEmail: !!b.marketing_email, marketingWhatsapp: !!(b.marketing_whatsapp && phone),
+        // Record of agreement: terms version and the 18+ confirmation (same tick box on the join form).
+        termsVersion: TERMS_VERSION, termsAcceptedAt: Timestamp.now(), ageConfirmed: true,
         cards: {}, lastStampTx: {}, totalStamps: 0, rewardsRedeemed: 0,
         createdAt: Timestamp.now(), activityAt: Timestamp.now(), lastVisitAt: null,
       });
@@ -282,6 +295,7 @@ m.get('/me', h(async (req, res) => {
     // The live card QR is computed on the phone from this secret (works offline; see liveqr.js).
     qr: liveqr.qrConfig(qrKey),
     wallet: { apple: wallet.appleEnabled(), google: wallet.googleEnabled(), has_apple: !!req.member.walletApple, has_google: !!req.member.walletGoogle },
+    rewards_blackout: await L.rewardBlackouts(),
   });
 }));
 
@@ -326,13 +340,18 @@ m.get('/history', h(async (req, res) => {
 m.patch('/me', h(async (req, res) => {
   const b = req.body || {};
   const f = {};
-  if (b.name !== undefined) {
+  if (b.first_name !== undefined || b.last_name !== undefined) {
+    f.firstName = String(b.first_name ?? req.member.firstName ?? '').trim().slice(0, 40);
+    f.lastName = String(b.last_name ?? req.member.lastName ?? '').trim().slice(0, 40);
+    if (!f.firstName || !f.lastName) return bad(res, 'First name and surname are required');
+    f.name = `${f.firstName} ${f.lastName}`;
+  } else if (b.name !== undefined) {
     f.name = String(b.name).trim().slice(0, 80);
     if (!f.name) return bad(res, 'Name cannot be empty');
   }
   if (b.phone !== undefined) {
     f.phone = normalizePhone(b.phone);
-    if (f.phone === undefined) return bad(res, "That phone number doesn't look right");
+    if (!f.phone) return bad(res, f.phone === undefined ? "That mobile number doesn't look right" : 'Your mobile / WhatsApp number is required');
   }
   if (b.marketing_email !== undefined) f.marketingEmail = !!b.marketing_email;
   if (b.marketing_whatsapp !== undefined) f.marketingWhatsapp = !!b.marketing_whatsapp;
@@ -484,6 +503,7 @@ async function staffMemberView(code) {
   return {
     member: publicMember(member),
     ...summary,
+    rewards_blackout: await L.rewardBlackouts(),
     recent: recent.map((t) => ({
       id: t.id, type: t.type, qty: t.qty, created_at: iso(t.createdAt), undone: t.undone ? 1 : 0, program_id: t.programId || null,
       program: t.programName || null, emoji: t.emoji || null, voucher: t.voucherTitle || null, staff: t.staffName || null,
@@ -525,7 +545,11 @@ s.post('/members/:code/gift', admin, memberByCode, h(async (req, res) => {
 s.patch('/members/:code', admin, memberByCode, h(async (req, res) => {
   const b = req.body || {};
   const f = {};
-  if (b.name !== undefined) f.name = String(b.name).trim() || req.target.name;
+  if (b.name !== undefined) {
+    f.name = String(b.name).trim().replace(/\s+/g, ' ') || req.target.name;
+    const [first, ...rest] = f.name.split(' ');
+    Object.assign(f, { firstName: first, lastName: rest.join(' ') });
+  }
   if (b.email !== undefined) {
     f.email = normalizeEmail(b.email);
     if (!f.email || !validEmail(f.email)) return bad(res, 'Enter a valid email');
@@ -714,6 +738,7 @@ s.get('/settings', admin, h(async (req, res) => {
     close_time: st.closeTime,
     bonus_min_checks: st.bonusMinChecks,
     bonus_min_new_regulars: st.bonusMinNewRegulars,
+    blackout_days: [...st.blackoutDays].sort((a, b) => a.date.localeCompare(b.date)),
     channels: { email: notify.emailEnabled(), whatsapp: notify.whatsappEnabled(), push: true },
     wallet: { apple: wallet.appleEnabled(), google: wallet.googleEnabled() },
     whatsapp_templates: { otp: env.WHATSAPP_OTP_TEMPLATE || null, birthday: env.WHATSAPP_BIRTHDAY_TEMPLATE || null },
@@ -742,6 +767,17 @@ s.patch('/settings', admin, h(async (req, res) => {
     if (b[key] === undefined) continue;
     if (b[key] && !/^([01]\d|2[0-3]):[0-5]\d$/.test(b[key])) throw new L.UserError('Times must be HH:MM, e.g. 10:00');
     f[field] = b[key] || '';
+  }
+  if (b.blackout_days !== undefined) {
+    if (!Array.isArray(b.blackout_days) || b.blackout_days.length > 100) throw new L.UserError('Too many no-reward days');
+    const seen = new Set();
+    f.blackoutDays = b.blackout_days.map((d) => {
+      const date = String(d?.date || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw new L.UserError('No-reward days need a valid date');
+      if (seen.has(date)) throw new L.UserError(`${date} is listed twice`);
+      seen.add(date);
+      return { date, label: String(d.label || 'Big match day').trim().slice(0, 60) || 'Big match day' };
+    });
   }
   await L.saveSettings(f);
   res.json({ ok: true });

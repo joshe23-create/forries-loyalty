@@ -1,5 +1,5 @@
 // App-shell cache so the card opens instantly (and offline shows the last-loaded shell).
-const CACHE = 'rewards-v5';
+const CACHE = 'rewards-v6';
 const SHELL = ['/', '/styles.css', '/member.js', '/manifest.webmanifest', '/icons/icon.svg', '/icons/logo-white.svg', '/vendor/qrcode-generator.js'];
 
 self.addEventListener('install', (e) => {
